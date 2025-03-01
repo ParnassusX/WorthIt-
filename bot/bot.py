@@ -1,14 +1,10 @@
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
-from fastapi import FastAPI, Request
-from dotenv import load_dotenv
-import os
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from typing import Dict, Any
 import httpx
-import json
+import os
 import re
-
-app = FastAPI()
-application = None
+from api.security import validate_url
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -53,54 +49,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Non ho capito. Invia un link di un prodotto o usa i pulsanti in basso.")
 
-async def analyze_product_url(update, url):
-    await update.message.reply_text(f"Sto analizzando il prodotto... Attendi un momento ⏳")
-    
+async def analyze_product_url(update: Update, url: str):
     try:
+        # Validate URL
+        validate_url(url)
+        
+        await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+        
         # Call our API to analyze the product
         api_host = os.getenv("API_HOST", "https://worth-it-api.vercel.app")
-        api_url = f"{api_host}/analyze?url={url}"
+        api_url = f"{api_host}/analyze"
+        
         async with httpx.AsyncClient() as client:
-            response = await client.post(api_url)
+            response = await client.post(api_url, params={"url": url})
+            if response.status_code != 200:
+                raise Exception(f"API error: {response.status_code}")
             data = response.json()
         
-        # Extract pros and cons from analysis
-        analysis_text = data["analysis"]
-        pros = []
-        cons = []
-        
-        # Simple parsing of pros/cons from the generated text
-        lines = analysis_text.split('\n')
-        current_section = None
-        
-        for line in lines:
-            line = line.strip()
-            if "pros:" in line.lower() or "advantages:" in line.lower() or "strengths:" in line.lower():
-                current_section = "pros"
-                continue
-            elif "cons:" in line.lower() or "disadvantages:" in line.lower() or "weaknesses:" in line.lower():
-                current_section = "cons"
-                continue
-                
-            if current_section == "pros" and line and not line.lower().startswith("cons"):
-                if line.startswith("-") or line.startswith("*"):
-                    pros.append(line.lstrip("-* ").capitalize())
-                elif len(pros) < 3 and line:  # Backup if no bullet points
-                    pros.append(line.capitalize())
-                    
-            if current_section == "cons" and line:
-                if line.startswith("-") or line.startswith("*"):
-                    cons.append(line.lstrip("-* ").capitalize())
-                elif len(cons) < 3 and line:  # Backup if no bullet points
-                    cons.append(line.capitalize())
-        
-        # Ensure we have at least some pros and cons
-        if not pros:
-            pros = ["Informazioni insufficienti"]
-        if not cons:
-            cons = ["Informazioni insufficienti"]
-        
-        # Format the response message
+        # Format the response with inline keyboard
         value_emoji = "🟢" if data["value_score"] >= 7 else "🟡" if data["value_score"] >= 5 else "🔴"
         
         message = f"*{data['title']}*\n\n"
@@ -109,65 +75,30 @@ async def analyze_product_url(update, url):
         message += f"*Raccomandazione:* {data['recommendation']}\n\n"
         
         message += "*Punti di forza:*\n"
-        for pro in pros[:3]:  # Limit to 3 pros
+        for pro in data['pros'][:3]:
             message += f"✅ {pro}\n"
         
         message += "\n*Punti deboli:*\n"
-        for con in cons[:3]:  # Limit to 3 cons
+        for con in data['cons'][:3]:
             message += f"❌ {con}\n"
         
-        # Add share button
+        # Create inline keyboard for actions
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(text="Condividi analisi", switch_inline_query=url)]
+            [InlineKeyboardButton(text="🔄 Aggiorna analisi", callback_data=f"refresh_{url}")],
+            [InlineKeyboardButton(text="📊 Confronta prezzi", callback_data=f"compare_{url}")],
+            [InlineKeyboardButton(text="📱 Apri nel browser", url=url)],
+            [InlineKeyboardButton(text="📤 Condividi analisi", switch_inline_query=url)]
         ])
         
         await update.message.reply_text(message, parse_mode="Markdown", reply_markup=keyboard)
         
     except Exception as e:
-        await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {str(e)}")
+        error_message = "Mi dispiace, non sono riuscito ad analizzare questo prodotto. "
+        if "URL not supported" in str(e):
+            error_message += "Per favore, usa un link di Amazon o eBay."
+        else:
+            error_message += f"Errore: {str(e)}"
+        await update.message.reply_text(error_message)
 
-@app.post("/webhook")
-async def webhook(request: Request):
-    global application
-    try:
-        if not application:
-            application = init_application()
-        data = await request.json()
-        update = Update.de_json(data, application.bot)
-        await application.update_queue.put(update)
-        return {"status": "ok"}
-    except Exception as e:
-        print(f"Error in webhook: {e}")
-        return {"status": "error", "message": str(e)}
-
-def init_application():
-    load_dotenv()
-    token = os.getenv("TELEGRAM_TOKEN")
-    if not token:
-        raise ValueError("TELEGRAM_TOKEN environment variable is not set")
-    
-    application = ApplicationBuilder().token(token).build()
-    
-    # Register command handlers
-    application.add_handler(CommandHandler("start", start))
-    
-    # Register message handlers for non-command messages
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
-    # Set commands with Telegram API
-    try:
-        commands = [
-            ("start", "Avvia il bot e mostra il menu principale")
-        ]
-        application.bot.set_my_commands(commands)
-        print("Bot commands registered successfully")
-    except Exception as e:
-        print(f"Failed to register bot commands: {e}")
-    
-    application.start()
-    return application
-
-if __name__ == "__main__":
-    init_application()
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+# Export handlers for webhook_handler.py
+__all__ = ['start', 'handle_text']

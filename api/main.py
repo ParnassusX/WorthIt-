@@ -4,6 +4,7 @@ import httpx
 import asyncio
 import logging
 from api.errors import register_exception_handlers
+from api.health import router as health_router
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,6 +23,9 @@ app.add_middleware(
 
 # Register error handlers
 register_exception_handlers(app)
+
+# Include routers
+app.include_router(health_router)
 
 # Hugging Face API endpoints
 SENTIMENT_API_URL = "https://api-inference.huggingface.co/models/nlptown/bert-base-multilingual-uncased-sentiment"
