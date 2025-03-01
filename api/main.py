@@ -32,6 +32,9 @@ app.include_router(health_router)
 from api.image_analyzer import router as image_router
 app.include_router(image_router, prefix="/api")
 
+# Removed mock implementation of analyze_product endpoint
+# The actual implementation is defined below
+
 # Hugging Face API endpoints
 SENTIMENT_API_URL = "https://api-inference.huggingface.co/models/nlptown/bert-base-multilingual-uncased-sentiment"
 TEXT_GENERATION_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"

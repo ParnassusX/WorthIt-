@@ -57,7 +57,8 @@ async def analyze_product_url(update: Update, url: str):
         await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
         
         # Call our API to analyze the product
-        api_host = os.getenv("API_HOST", "https://worth-it-api.vercel.app")
+        vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
+        api_host = os.getenv("API_HOST", f"https://{vercel_url}")
         api_url = f"{api_host}/analyze"
         
         async with httpx.AsyncClient() as client:

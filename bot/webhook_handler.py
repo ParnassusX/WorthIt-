@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any
 import httpx
 import os
 import re
+import asyncio
 from dotenv import load_dotenv
 from .bot import start, handle_text
 
@@ -13,14 +14,20 @@ application: Optional[Application] = None
 
 async def analyze_product(url: str) -> Dict[str, Any]:
     """Call the WorthIt! API to analyze a product"""
-    api_host = os.getenv("API_HOST", "https://worth-it-api.vercel.app")
+    vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
+    api_host = os.getenv("API_HOST", f"https://{vercel_url}")
     api_url = f"{api_host}/analyze"
     
-    async with httpx.AsyncClient() as client:
-        response = await client.post(api_url, params={"url": url})
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=response.text)
-        return response.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(api_url, params={"url": url}, timeout=30.0)
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=response.text)
+            return response.json()
+    except Exception as e:
+        # Log the error for debugging
+        print(f"API request error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze product: {str(e)}")
 
 async def format_analysis_response(data: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
     """Format the analysis response for Telegram"""
@@ -98,8 +105,9 @@ async def webhook_handler(request: Request):
             application.add_handler(CommandHandler("start", start))
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
             application.add_handler(CallbackQueryHandler(handle_callback_query))
+            
+            # Initialize but don't start the application
             await application.initialize()
-            await application.start()
             
             # Set bot commands
             await application.bot.set_my_commands([
@@ -111,7 +119,17 @@ async def webhook_handler(request: Request):
         # Process the update
         data = await request.json()
         update = Update.de_json(data, application.bot)
-        await application.process_update(update)
+        
+        # Create a new event loop for processing updates
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Process update in the new loop
+            await application.process_update(update)
+        finally:
+            # Clean up the loop
+            loop.close()
         
         return {"status": "ok"}
     
