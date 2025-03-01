@@ -1,12 +1,22 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from supabase import create_client
-from transformers import pipeline
 import os
 import httpx
 import asyncio
 from api.errors import register_exception_handlers
+from textblob import TextBlob
 
-app = FastAPI()
+app = FastAPI(title="WorthIt! API", version="1.0.0")
+
+# Enable CORS
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Register error handlers
 register_exception_handlers(app)
@@ -19,17 +29,16 @@ def get_supabase():
         raise ValueError("Missing Supabase credentials. Set SUPABASE_URL and SUPABASE_KEY environment variables.")
     return create_client(url, key)
 
-# Initialize sentiment analyzer
-def get_sentiment_analyzer():
+# Simple sentiment analysis function
+def analyze_sentiment(text):
     try:
-        return pipeline(
-            "text-classification", 
-            model="nlptown/bert-base-multilingual-uncased-sentiment",
-            token=os.getenv("HF_TOKEN")
-        )
+        analysis = TextBlob(text)
+        # Convert polarity (-1 to 1) to 1-5 scale
+        sentiment_score = ((analysis.sentiment.polarity + 1) * 2) + 1
+        return min(5, max(1, sentiment_score))
     except Exception as e:
-        print(f"Error loading sentiment model: {e}")
-        return None
+        print(f"Error analyzing sentiment: {e}")
+        return 3  # Neutral sentiment as fallback
 
 # Scraping function using Apify
 async def scrape_product(url):
@@ -115,17 +124,11 @@ def analyze_value(data):
         if not reviews:
             return 0.0
         
-        sentiment_analyzer = get_sentiment_analyzer()
-        if not sentiment_analyzer:
-            return 0.0
-        
         # Get average sentiment (1-5 scale)
         sentiments = []
         for review in reviews[:10]:  # Analyze up to 10 reviews
             try:
-                result = sentiment_analyzer(review)
-                # Extract the star rating from the label (e.g., "5 stars" -> 5)
-                rating = int(result[0]["label"].split()[0])
+                rating = analyze_sentiment(review)
                 sentiments.append(rating)
             except Exception:
                 continue
