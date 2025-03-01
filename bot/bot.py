@@ -1,4 +1,4 @@
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler
 from fastapi import FastAPI, Request
 import os
@@ -7,25 +7,33 @@ app = FastAPI()
 bot = None
 
 async def start(update: Update, context):
+    keyboard = [
+        [{
+            "text": "Scansiona 📸",
+            "web_app": {"url": "https://" + os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")}
+        }],
+        ["📊 Le mie analisi", "ℹ️ Aiuto"],
+        ["🔍 Cerca prodotto", "⭐️ Prodotti popolari"]
+    ]
+    
     await update.message.reply_text(
-        "Benvenuto in WorthIt! 🚀\nScansiona un prodotto:",
-        reply_markup={
-            "keyboard": [[{
-                "text": "Scansiona 📸", 
-                "web_app": {"url": os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")}
-            }]]
-        }
+        "Benvenuto in WorthIt! 🚀\nScegli un'opzione:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
 @app.post("/webhook")
 async def webhook(request: Request):
     global bot
-    if not bot:
-        bot = init_bot()
-    data = await request.json()
-    update = Update.de_json(data, bot)
-    await bot.process_update(update)
-    return {"status": "ok"}
+    try:
+        if not bot:
+            bot = init_bot()
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        await bot.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"Error in webhook: {e}")
+        return {"status": "error", "message": str(e)}
 
 def init_bot():
     token = os.getenv("TELEGRAM_TOKEN")
@@ -36,10 +44,9 @@ def init_bot():
     application.add_handler(CommandHandler("start", start))
     
     # Set webhook URL when deployed
-    vercel_url = os.getenv("VERCEL_URL")
-    if vercel_url:
-        webhook_url = f"https://{vercel_url}/webhook"
-        application.set_webhook(webhook_url)
+    vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
+    webhook_url = f"https://{vercel_url}/webhook"
+    application.set_webhook(webhook_url)
     
     return application
 
