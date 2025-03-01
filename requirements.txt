@@ -9,3 +9,4 @@ anyio
 starlette
 apify-client
 pydantic
+python-multipart
