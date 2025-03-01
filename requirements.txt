@@ -2,9 +2,10 @@
 python-telegram-bot
 fastapi
 uvicorn
-httpx
-textblob
+httpx>=0.24.0
 python-dotenv
 typing-extensions
 anyio
 starlette
+apify-client
+pydantic
