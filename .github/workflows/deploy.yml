@@ -1,0 +1,26 @@
+name: Deploy
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+      - name: Run tests
+        run: |
+          pytest tests/
+      # Placeholder for deployment step
+      # In a real implementation, you would add deployment to Vercel or another platform
+      - name: Deploy placeholder
+        run: |
+          echo "Deployment would happen here"
+          echo "In a real implementation, you would use vercel-action or similar"
