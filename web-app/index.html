@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WorthIt! Lite</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 16px;
+            color: var(--tg-theme-text-color, #222);
+            background-color: var(--tg-theme-bg-color, #fff);
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--tg-theme-hint-color, #ccc);
+            border-radius: 8px;
+            font-size: 16px;
+            box-sizing: border-box;
+            background-color: var(--tg-theme-secondary-bg-color, #f5f5f5);
+            color: var(--tg-theme-text-color, #222);
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--tg-theme-button-color, #2481cc);
+            color: var(--tg-theme-button-text-color, #fff);
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        .result {
+            margin-top: 24px;
+            padding: 16px;
+            border-radius: 8px;
+            background-color: var(--tg-theme-secondary-bg-color, #f5f5f5);
+            display: none;
+        }
+        .product-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .value-score {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 12px 0;
+        }
+        .recommendation {
+            font-size: 20px;
+            margin: 12px 0;
+        }
+        .pros-cons {
+            margin-top: 16px;
+        }
+        .pros, .cons {
+            margin-top: 8px;
+        }
+        .pros li, .cons li {
+            margin-bottom: 4px;
+        }
+        .loading {
+            text-align: center;
+            display: none;
+            margin: 20px 0;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+            border-top: 4px solid var(--tg-theme-button-color, #2481cc);
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">WorthIt! Lite</div>
+            <div>Analisi del valore reale dei prodotti</div>
+        </div>
+        
+        <div class="input-group">
+            <input type="text" id="product-url" placeholder="Incolla URL del prodotto (Amazon, eBay, ecc.)">
+            <button id="analyze-btn">Analizza Prodotto</button>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Analisi in corso...</p>
+        </div>
+        
+        <div class="result" id="result">
+            <div class="product-title" id="product-title"></div>
+            <div class="value-score" id="value-score"></div>
+            <div class="recommendation" id="recommendation"></div>
+            
+            <div class="pros-cons">
+                <div><strong>Punti di forza:</strong></div>
+                <ul class="pros" id="pros"></ul>
+                
+                <div><strong>Punti deboli:</strong></div>
+                <ul class="cons" id="cons"></ul>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

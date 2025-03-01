@@ -1,0 +1,10 @@
+# WorthIt! Lite dependencies
+python-telegram-bot>=20.0
+fastapi>=0.95.0
+uvicorn>=0.21.0
+httpx>=0.24.0
+supabase>=0.7.1
+transformers>=4.28.0
+torch>=2.0.0
+asyncio>=3.4.3
+python-dotenv>=1.0.0
