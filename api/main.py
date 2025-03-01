@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException
-from supabase import create_client
 import os
 import httpx
 import asyncio
@@ -21,13 +20,8 @@ app.add_middleware(
 # Register error handlers
 register_exception_handlers(app)
 
-# Initialize Supabase client
-def get_supabase():
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_KEY")
-    if not url or not key:
-        raise ValueError("Missing Supabase credentials. Set SUPABASE_URL and SUPABASE_KEY environment variables.")
-    return create_client(url, key)
+# In-memory storage for products (temporary solution while Supabase is disabled)
+products_db = []
 
 # Simple sentiment analysis function
 def analyze_sentiment(text):
@@ -174,12 +168,8 @@ async def analyze_product_endpoint(url: str):
                            "🔴 Scarso"
         }
         
-        # Save to database
-        try:
-            supabase = get_supabase()
-            supabase.table("products").insert(analysis).execute()
-        except Exception as db_error:
-            print(f"Database error: {db_error}")
+        # Save to in-memory database (temporary solution)
+        products_db.append(analysis)
         
         return analysis
     
@@ -189,9 +179,8 @@ async def analyze_product_endpoint(url: str):
 @app.get("/products")
 async def get_products():
     try:
-        supabase = get_supabase()
-        response = supabase.table("products").select("*").execute()
-        return response.data
+        # Return products from in-memory database (temporary solution)
+        return products_db
     except Exception as e:
         return {"error": str(e)}
 
