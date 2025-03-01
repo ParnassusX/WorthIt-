@@ -27,6 +27,10 @@ register_exception_handlers(app)
 # Include routers
 app.include_router(health_router)
 
+# Import and include image analysis router
+from api.image_analyzer import router as image_router
+app.include_router(image_router, prefix="/api")
+
 # Hugging Face API endpoints
 SENTIMENT_API_URL = "https://api-inference.huggingface.co/models/nlptown/bert-base-multilingual-uncased-sentiment"
 TEXT_GENERATION_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
@@ -94,10 +98,10 @@ async def scrape_product(url):
                     // Common selectors for major e-commerce sites
                     const selectors = {
                         amazon: {
-                            title: '#productTitle',
-                            price: '.a-price .a-offscreen',
-                            description: '#feature-bullets, #productDescription',
-                            reviews: '.review-text'
+                            title: '#productTitle, #title',
+                            price: '.a-price .a-offscreen, #price_inside_buybox, #priceblock_ourprice',
+                            description: '#feature-bullets, #productDescription, #productDetails',
+                            reviews: '.review-text, .review-text-content, [data-hook="review-body"]'
                         },
                         ebay: {
                             title: '.x-item-title__mainTitle',
@@ -148,7 +152,14 @@ async def scrape_product(url):
             f"https://api.apify.com/v2/acts/apify~web-scraper/runs/{run_id}/dataset/items",
             headers={"Authorization": f"Bearer {apify_token}"}
         )
-        return results.json()[0]
+        
+        # Check if we got any results
+        data = results.json()
+        if not data or len(data) == 0:
+            logger.error(f"No data returned from scraper for URL: {url}")
+            raise Exception(f"Failed to extract product data from {url}")
+            
+        return data[0]
 
 def parse_pros_cons(analysis_text: str):
     """Parse pros and cons from the generated analysis text."""

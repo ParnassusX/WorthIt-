@@ -110,6 +110,10 @@
         <div class="input-group">
             <input type="text" id="product-url" placeholder="Incolla URL del prodotto (Amazon, eBay, ecc.)">
             <button id="analyze-btn">Analizza Prodotto</button>
+            <button id="camera-btn" class="camera-button">
+                <span class="camera-icon">📸</span> Scansiona con la fotocamera
+            </button>
+            <input type="file" id="camera-input" accept="image/*" capture="environment" style="display: none;">
         </div>
         
         <div class="loading" id="loading">

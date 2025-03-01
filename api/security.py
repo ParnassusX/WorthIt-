@@ -16,7 +16,7 @@ def validate_url(url: str) -> bool:
         raise HTTPException(status_code=400, detail="URL cannot be empty")
     
     # Validate URL format and supported marketplaces
-    valid_domains = r'^https?://(www\.)?(amazon|ebay)\.(it|com|co\.uk|de|fr|es)'
+    valid_domains = r'^https?://([a-z0-9\.-]+\.)?(amazon|ebay)\.(it|com|co\.uk|de|fr|es|in|ca|com\.au|com\.br|nl|pl|se|sg)'
     if not re.match(valid_domains, url, re.IGNORECASE):
         raise HTTPException(
             status_code=400,

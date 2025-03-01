@@ -19,6 +19,48 @@ const API_URL = '/api/analyze';
 // Event listeners
 analyzeBtn.addEventListener('click', analyzeProduct);
 
+// Camera functionality
+const cameraBtn = document.getElementById('camera-btn');
+const cameraInput = document.getElementById('camera-input');
+
+cameraBtn.addEventListener('click', () => {
+    cameraInput.click();
+});
+
+cameraInput.addEventListener('change', async (event) => {
+    if (event.target.files && event.target.files[0]) {
+        const file = event.target.files[0];
+        
+        // Show loading state
+        resultEl.style.display = 'none';
+        loadingDiv.style.display = 'block';
+        
+        try {
+            // Create FormData to send the image
+            const formData = new FormData();
+            formData.append('image', file);
+            
+            // Call the API endpoint for image processing
+            const response = await fetch('/api/analyze-image', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                throw new Error(`API error: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            displayResults(data);
+        } catch (error) {
+            console.error('Error processing image:', error);
+            alert('Si è verificato un errore durante l\'elaborazione dell\'immagine. Riprova più tardi.');
+        } finally {
+            loadingDiv.style.display = 'none';
+        }
+    }
+});
+
 // Main function to analyze product
 async function analyzeProduct() {
     const productUrl = productUrlInput.value.trim();
@@ -78,15 +120,19 @@ function displayResults(data) {
     prosList.innerHTML = '';
     consList.innerHTML = '';
     
-    // Extract pros and cons from analysis text
-    const pros = [];
-    const cons = [];
+    // Extract pros and cons from analysis text or use provided pros/cons
+    let pros = [];
+    let cons = [];
     
-    // Simple parsing of pros/cons from the generated text
-    const lines = data.analysis.split('\n');
-    let currentSection = null;
-    
-    for (const line of lines) {
+    // Check if the API directly provided pros and cons arrays
+    if (data.pros && Array.isArray(data.pros)) {
+        pros = data.pros;
+    } else if (data.analysis) {
+        // Simple parsing of pros/cons from the generated text
+        const lines = data.analysis.split('\n');
+        let currentSection = null;
+        
+        for (const line of lines) {
         const trimmedLine = line.trim();
         if (trimmedLine.toLowerCase().includes('pros:') || 
             trimmedLine.toLowerCase().includes('advantages:') || 
@@ -115,6 +161,7 @@ function displayResults(data) {
                 cons.push(trimmedLine.charAt(0).toUpperCase() + trimmedLine.slice(1));
             }
         }
+    }
     }
     
     // Ensure we have at least some pros and cons
