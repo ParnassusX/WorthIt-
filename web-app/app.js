@@ -13,8 +13,8 @@ const recommendationEl = document.getElementById('recommendation');
 const prosList = document.getElementById('pros');
 const consList = document.getElementById('cons');
 
-// API endpoint - updated to use local FastAPI server
-const API_URL = 'http://localhost:8000/analyze';
+// API endpoint - updated to use deployed API endpoint
+const API_URL = '/api/analyze';
 
 // Event listeners
 analyzeBtn.addEventListener('click', analyzeProduct);
@@ -24,7 +24,7 @@ async function analyzeProduct() {
     const productUrl = productUrlInput.value.trim();
     
     if (!productUrl) {
-        alert('Per favore, inserisci un URL o codice prodotto valido');
+        alert('Per favore, inserisci un URL valido');
         return;
     }
     
@@ -33,31 +33,22 @@ async function analyzeProduct() {
     loadingDiv.style.display = 'block';
     
     try {
-        // Call the local API
-        const response = await fetch(API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: productUrl })
+        // Call the API
+        const response = await fetch(`${API_URL}?url=${encodeURIComponent(productUrl)}`, {
+            method: 'POST'
         });
         
-        // If API call fails, use mock data for demo purposes
-        let data;
         if (!response.ok) {
-            console.warn('API call failed, using mock data instead');
-            data = await getMockData(productUrl);
-        } else {
-            data = await response.json();
+            throw new Error(`API error: ${response.status}`);
         }
+        
+        const data = await response.json();
         
         // Display results
         displayResults(data);
     } catch (error) {
         console.error('Error analyzing product:', error);
         alert('Si è verificato un errore durante l\'analisi del prodotto. Riprova più tardi.');
-        
-        // For demo purposes, still show mock data even if there's an error
-        const mockData = await getMockData(productUrl);
-        displayResults(mockData);
     } finally {
         loadingDiv.style.display = 'none';
     }
@@ -68,31 +59,81 @@ function displayResults(data) {
     // Set product info
     productTitle.textContent = data.title;
     
-    // Set value score
-    valueScoreEl.textContent = `Valore: ${data.value_score.toFixed(1)}/5.0`;
+    // Set value score with emoji indicator
+    const valueScore = data.value_score;
+    let valueEmoji = '🔴'; // Default red
+    
+    if (valueScore >= 7) {
+        valueEmoji = '🟢'; // Green for good value
+    } else if (valueScore >= 5) {
+        valueEmoji = '🟡'; // Yellow for medium value
+    }
+    
+    valueScoreEl.textContent = `Valore: ${valueEmoji} ${valueScore.toFixed(1)}/10`;
     
     // Set recommendation
-    if (data.value_score >= 4) {
-        recommendationEl.textContent = 'Vale il prezzo? SÌ!';
-    } else if (data.value_score >= 3) {
-        recommendationEl.textContent = 'Vale il prezzo? FORSE';
-    } else {
-        recommendationEl.textContent = 'Vale il prezzo? NO';
-    }
+    recommendationEl.textContent = data.recommendation;
     
     // Clear previous lists
     prosList.innerHTML = '';
     consList.innerHTML = '';
     
+    // Extract pros and cons from analysis text
+    const pros = [];
+    const cons = [];
+    
+    // Simple parsing of pros/cons from the generated text
+    const lines = data.analysis.split('\n');
+    let currentSection = null;
+    
+    for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (trimmedLine.toLowerCase().includes('pros:') || 
+            trimmedLine.toLowerCase().includes('advantages:') || 
+            trimmedLine.toLowerCase().includes('strengths:')) {
+            currentSection = 'pros';
+            continue;
+        } else if (trimmedLine.toLowerCase().includes('cons:') || 
+                 trimmedLine.toLowerCase().includes('disadvantages:') || 
+                 trimmedLine.toLowerCase().includes('weaknesses:')) {
+            currentSection = 'cons';
+            continue;
+        }
+        
+        if (currentSection === 'pros' && trimmedLine && !trimmedLine.toLowerCase().startsWith('cons')) {
+            if (trimmedLine.startsWith('-') || trimmedLine.startsWith('*')) {
+                pros.push(trimmedLine.replace(/^[-*]\s*/, '').charAt(0).toUpperCase() + trimmedLine.replace(/^[-*]\s*/, '').slice(1));
+            } else if (pros.length < 3 && trimmedLine) { // Backup if no bullet points
+                pros.push(trimmedLine.charAt(0).toUpperCase() + trimmedLine.slice(1));
+            }
+        }
+        
+        if (currentSection === 'cons' && trimmedLine) {
+            if (trimmedLine.startsWith('-') || trimmedLine.startsWith('*')) {
+                cons.push(trimmedLine.replace(/^[-*]\s*/, '').charAt(0).toUpperCase() + trimmedLine.replace(/^[-*]\s*/, '').slice(1));
+            } else if (cons.length < 3 && trimmedLine) { // Backup if no bullet points
+                cons.push(trimmedLine.charAt(0).toUpperCase() + trimmedLine.slice(1));
+            }
+        }
+    }
+    
+    // Ensure we have at least some pros and cons
+    if (pros.length === 0) {
+        pros.push('Informazioni insufficienti');
+    }
+    if (cons.length === 0) {
+        cons.push('Informazioni insufficienti');
+    }
+    
     // Add pros
-    data.pros.forEach(pro => {
+    pros.slice(0, 3).forEach(pro => {
         const li = document.createElement('li');
         li.textContent = pro;
         prosList.appendChild(li);
     });
     
     // Add cons
-    data.cons.forEach(con => {
+    cons.slice(0, 3).forEach(con => {
         const li = document.createElement('li');
         li.textContent = con;
         consList.appendChild(li);
@@ -101,15 +142,15 @@ function displayResults(data) {
     // Show results
     resultEl.style.display = 'block';
     
-    // Notify Telegram app that we're done
-    tg.MainButton.setText('Condividi Risultato');
-    tg.MainButton.show();
-    tg.MainButton.onClick(() => {
+    // Send data back to Telegram if in Telegram WebApp
+    if (tg.initDataUnsafe?.query_id) {
         tg.sendData(JSON.stringify({
-            product_url: productUrlInput.value,
-            analysis: data
+            url: productUrlInput.value,
+            title: data.title,
+            value_score: valueScore,
+            recommendation: data.recommendation
         }));
-    });
+    }
 }
 
 
