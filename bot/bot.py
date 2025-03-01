@@ -43,10 +43,8 @@ def init_bot():
     application = ApplicationBuilder().token(token).build()
     application.add_handler(CommandHandler("start", start))
     
-    # Set webhook URL when deployed
-    vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
-    webhook_url = f"https://{vercel_url}/webhook"
-    application.set_webhook(webhook_url)
+    # Note: We don't set the webhook here anymore
+    # The webhook is set externally using the activate_webhook.py script
     
     return application
 
