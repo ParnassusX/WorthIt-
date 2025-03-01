@@ -5,6 +5,7 @@ import asyncio
 import logging
 from api.errors import register_exception_handlers
 from api.health import router as health_router
+from api.ml_processor import analyze_reviews, extract_product_pros_cons, get_value_score
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -199,38 +200,36 @@ async def analyze_product(url: str):
         if not product_data.get('reviews'):
             logger.warning(f"No reviews found for product: {url}")
 
-        # Analyze reviews sentiment
+        # Prepare reviews data structure for ML processor
+        reviews = []
+        for review_text in product_data.get('reviews', []):
+            reviews.append({"review": review_text})
+            
+        # Use ml_processor for sentiment analysis
         try:
-            sentiments = []
-            for review in product_data.get('reviews', []):
-                result = await analyze_sentiment(review)
-                score = int(result['label'].split('stars')[0])
-                sentiments.append(score)
-
-            avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 3
+            sentiment_data = await analyze_reviews(reviews)
+            avg_sentiment = sentiment_data.get('average_sentiment', 3)
         except Exception as e:
             logger.error(f"Sentiment analysis error: {e}")
             avg_sentiment = 3  # Fallback to neutral sentiment
+            sentiment_data = {"average_sentiment": avg_sentiment}
 
-        # Generate pros/cons analysis
+        # Use ml_processor for pros/cons extraction
         try:
-            analysis_prompt = f"""Analyze this product description and provide a structured list of pros and cons. Format your response as follows:
-
-Pros:
-- [advantage 1]
-- [advantage 2]
-- [advantage 3]
-
-Cons:
-- [disadvantage 1]
-- [disadvantage 2]
-- [disadvantage 3]
-
-Product description:
-{product_data['description']}"""
-
-            analysis_result = await generate_pros_cons(analysis_prompt)
-            pros_cons = parse_pros_cons(analysis_result['generated_text'])
+            # Prepare product data structure
+            processed_product_data = {
+                "title": product_data.get("title", "Unknown Product"),
+                "description": product_data.get("description", ""),
+                "features": [],  # Extract features if available in your scraping
+                "price": product_data.get("price", "Price not available"),
+                "url": url
+            }
+            
+            pros, cons = await extract_product_pros_cons(reviews, processed_product_data)
+            pros_cons = {
+                'pros': pros,
+                'cons': cons
+            }
         except Exception as e:
             logger.error(f"Pros/cons analysis error: {e}")
             pros_cons = {
@@ -238,8 +237,12 @@ Product description:
                 'cons': ['Analysis unavailable']
             }
 
-        # Calculate value score (1-10)
-        value_score = min(10, max(1, avg_sentiment * 2))  # Ensure score is between 1-10
+        # Use ml_processor for value score calculation
+        try:
+            value_score = await get_value_score(processed_product_data, sentiment_data)
+        except Exception as e:
+            logger.error(f"Value score calculation error: {e}")
+            value_score = min(10, max(1, avg_sentiment * 2))  # Fallback calculation
 
         return {
             "title": product_data.get("title", "Unknown Product"),

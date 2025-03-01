@@ -1,0 +1,276 @@
+# WorthIt! ML Processor
+import os
+import json
+from typing import Dict, Any, List, Tuple
+import httpx
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Initialize HuggingFace token
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+class MLProcessor:
+    """Class to handle AI/ML processing for product analysis"""
+    
+    def __init__(self):
+        self.hf_token = HF_TOKEN
+        self.headers = {"Authorization": f"Bearer {self.hf_token}"}
+        # Define model endpoints
+        self.sentiment_model = "nlptown/bert-base-multilingual-uncased-sentiment"
+        self.feature_model = "mistralai/Mistral-7B-Instruct-v0.2"
+        self.summary_model = "facebook/bart-large-cnn"
+        
+    async def analyze_sentiment(self, reviews: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze sentiment of product reviews using HuggingFace BERT multilingual model"""
+        try:
+            if not reviews:
+                return {"average_sentiment": 0, "sentiment_distribution": {}}
+            
+            # Extract review texts
+            review_texts = [review.get("review", "") for review in reviews if review.get("review")]
+            
+            if not review_texts:
+                return {"average_sentiment": 0, "sentiment_distribution": {}}
+            
+            # Use BERT multilingual for accurate sentiment scoring
+            api_url = f"https://api-inference.huggingface.co/models/{self.sentiment_model}"
+            
+            # Process reviews in batches to avoid timeout
+            batch_size = 10
+            all_sentiments = []
+            
+            for i in range(0, len(review_texts), batch_size):
+                batch = review_texts[i:i+batch_size]
+                
+                # Call HuggingFace API
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        api_url,
+                        headers=self.headers,
+                        json={"inputs": batch}
+                    )
+                    
+                    if response.status_code != 200:
+                        print(f"Error from HuggingFace API: {response.text}")
+                        continue
+                    
+                    # Parse results - BERT model returns direct star ratings
+                    results = response.json()
+                    
+                    for result in results:
+                        if isinstance(result, list):
+                            # Get highest probability sentiment
+                            sentiment = max(result, key=lambda x: x["score"])
+                            # Extract star rating (1-5)
+                            try:
+                                sentiment_value = int(sentiment["label"].split()[0])
+                                all_sentiments.append(sentiment_value)
+                            except:
+                                all_sentiments.append(3)  # Neutral default
+                        else:
+                            all_sentiments.append(3)
+            
+            # Calculate average sentiment (1-5 scale)
+            if all_sentiments:
+                average_sentiment = sum(all_sentiments) / len(all_sentiments)
+            else:
+                average_sentiment = 3  # Neutral default
+            
+            # Calculate sentiment distribution
+            sentiment_distribution = {}
+            for sentiment in all_sentiments:
+                sentiment_distribution[sentiment] = sentiment_distribution.get(sentiment, 0) + 1
+            
+            # Normalize to percentages
+            total = len(all_sentiments)
+            for key in sentiment_distribution:
+                sentiment_distribution[key] = round((sentiment_distribution[key] / total) * 100, 2)
+            
+            return {
+                "average_sentiment": round(average_sentiment, 2),
+                "sentiment_distribution": sentiment_distribution
+            }
+            
+        except Exception as e:
+            print(f"Error analyzing sentiment: {str(e)}")
+            return {"average_sentiment": 3, "sentiment_distribution": {}, "error": str(e)}
+    
+    async def extract_pros_cons(self, reviews: List[Dict[str, Any]], product_data: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+        """Extract pros and cons from product reviews using Mistral-7B"""
+        try:
+            if not reviews:
+                return [], []
+            
+            # Combine review texts with product description for context
+            product_description = product_data.get("description", "")
+            product_features = product_data.get("features", [])
+            
+            # Create an improved prompt for better extraction
+            prompt = f"""Analyze this product and its reviews to extract key pros and cons:
+
+Product: {product_data.get('title', 'Unknown Product')}
+
+Description: {product_description}
+
+Features: {', '.join(product_features)}
+
+Reviews:
+"""
+            
+            # Add review samples with ratings for better context
+            for i, review in enumerate(reviews[:5]):
+                rating = review.get("rating", "")
+                review_text = review.get("review", "")
+                prompt += f"Review {i+1} ({rating}/5 stars): {review_text}\n\n"
+            
+            prompt += "\nBased on the product information and reviews above, provide a comprehensive analysis in the following format:\n\nPros:\n- [Key advantage with specific detail]\n- [Another significant benefit]\n- [Unique selling point]\n- [Notable feature benefit]\n- [Positive user experience]\n\nCons:\n- [Main drawback or limitation]\n- [Potential issue]\n- [User complaint pattern]\n- [Feature limitation]\n- [Area for improvement]"
+            
+            # Use Mistral-7B for advanced analysis
+            api_url = f"https://api-inference.huggingface.co/models/{self.feature_model}"
+            
+            # Call HuggingFace API with improved parameters
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    api_url,
+                    headers=self.headers,
+                    json={
+                        "inputs": prompt,
+                        "parameters": {
+                            "max_new_tokens": 800,
+                            "temperature": 0.7,
+                            "top_p": 0.95,
+                            "do_sample": True,
+                            "return_full_text": False
+                        }
+                    },
+                    timeout=60.0
+                )
+                
+                if response.status_code != 200:
+                    print(f"Error from HuggingFace API: {response.text}")
+                    return [], []
+                
+                # Parse results with improved handling
+                result = response.json()
+                generated_text = ""
+                
+                if isinstance(result, list) and len(result) > 0:
+                    generated_text = result[0].get("generated_text", "")
+                else:
+                    generated_text = result.get("generated_text", "")
+            
+            # Enhanced parsing logic
+            pros = []
+            cons = []
+            current_section = None
+            
+            for line in generated_text.split('\n'):
+                line = line.strip()
+                
+                if line.lower().startswith("pros:"):
+                    current_section = "pros"
+                    continue
+                elif line.lower().startswith("cons:"):
+                    current_section = "cons"
+                    continue
+                
+                if line.startswith("-") or line.startswith("*"):
+                    item = line[1:].strip()
+                    if current_section == "pros" and item and len(pros) < 5:
+                        pros.append(item)
+                    elif current_section == "cons" and item and len(cons) < 5:
+                        cons.append(item)
+            
+            # Ensure meaningful results
+            if not pros:
+                if product_features[:3]:
+                    pros = [f"Good {feature}" for feature in product_features[:3]]
+                else:
+                    pros = ["Positive user reviews", "Competitive pricing", "Quality product"]
+            
+            if not cons:
+                cons = ["Limited review data", "More user feedback needed", "Consider alternatives"]
+            
+            return pros[:5], cons[:5]
+            
+        except Exception as e:
+            print(f"Error extracting pros/cons: {str(e)}")
+            return [], []
+    
+    async def calculate_value_score(self, product_data: Dict[str, Any], sentiment_data: Dict[str, Any]) -> float:
+        """Calculate a comprehensive value score based on multiple factors"""
+        try:
+            # Extract base data
+            price = product_data.get("price", "0")
+            rating = product_data.get("rating", 0)
+            review_count = product_data.get("review_count", 0)
+            features_count = len(product_data.get("features", []))
+            sentiment = sentiment_data.get("average_sentiment", 3)
+            
+            # Normalize price (remove currency symbols)
+            try:
+                if isinstance(price, str):
+                    price = float(''.join(c for c in price if c.isdigit() or c == '.'))
+                else:
+                    price = float(price)
+            except:
+                price = 0
+            
+            # Normalize rating to 0-10 scale
+            if isinstance(rating, str):
+                try:
+                    rating = float(rating.split('/')[0])
+                except:
+                    rating = 0
+            
+            base_score = (rating / 5) * 10 if rating else 5
+            
+            # Enhanced sentiment impact (-2 to +2)
+            sentiment_modifier = (sentiment - 3)
+            
+            # Feature richness impact (0 to 1.5)
+            feature_modifier = min(features_count / 4, 1.5)
+            
+            # Price-value ratio impact (-1 to +1)
+            price_modifier = 0
+            if price > 0:
+                # Compare to average price in category (placeholder)
+                avg_price = 100  # This should be dynamically calculated
+                price_ratio = price / avg_price
+                price_modifier = 1 - min(price_ratio, 2)  # Cap negative impact
+            
+            # Review confidence (0 to 1)
+            review_confidence = min(review_count / 100, 1)
+            
+            # Calculate weighted score
+            value_score = base_score + sentiment_modifier + feature_modifier + price_modifier
+            
+            # Apply confidence adjustment
+            value_score = (value_score * review_confidence) + (7 * (1 - review_confidence))
+            
+            # Ensure score is within 0-10 range
+            value_score = max(0, min(10, value_score))
+            
+            return round(value_score, 1)
+            
+        except Exception as e:
+            print(f"Error calculating value score: {str(e)}")
+            return 5.0  # Default neutral score
+
+# Create a singleton instance
+ml_processor = MLProcessor()
+
+# Convenience functions
+async def analyze_reviews(reviews: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Analyze sentiment of product reviews"""
+    return await ml_processor.analyze_sentiment(reviews)
+
+async def extract_product_pros_cons(reviews: List[Dict[str, Any]], product_data: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    """Extract pros and cons from product reviews"""
+    return await ml_processor.extract_pros_cons(reviews, product_data)
+
+async def get_value_score(product_data: Dict[str, Any], sentiment_data: Dict[str, Any]) -> float:
+    """Calculate value score for a product"""
+    return await ml_processor.calculate_value_score(product_data, sentiment_data)
