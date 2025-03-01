@@ -2,8 +2,12 @@ from fastapi import FastAPI, HTTPException
 import os
 import httpx
 import asyncio
+import logging
 from api.errors import register_exception_handlers
-from textblob import TextBlob
+from transformers import pipeline
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="WorthIt! API", version="1.0.0")
 
@@ -20,19 +24,22 @@ app.add_middleware(
 # Register error handlers
 register_exception_handlers(app)
 
-# In-memory storage for products (temporary solution while Supabase is disabled)
-products_db = []
+# Initialize Hugging Face pipelines
+try:
+    sentiment_analyzer = pipeline(
+        "text-classification",
+        model="nlptown/bert-base-multilingual-uncased-sentiment",
+        token=os.getenv("HF_TOKEN")
+    )
 
-# Simple sentiment analysis function
-def analyze_sentiment(text):
-    try:
-        analysis = TextBlob(text)
-        # Convert polarity (-1 to 1) to 1-5 scale
-        sentiment_score = ((analysis.sentiment.polarity + 1) * 2) + 1
-        return min(5, max(1, sentiment_score))
-    except Exception as e:
-        print(f"Error analyzing sentiment: {e}")
-        return 3  # Neutral sentiment as fallback
+    pros_cons_analyzer = pipeline(
+        "text-generation",
+        model="mistralai/Mistral-7B-Instruct-v0.2",
+        token=os.getenv("HF_TOKEN")
+    )
+except Exception as e:
+    logger.error(f"Failed to initialize Hugging Face pipelines: {e}")
+    raise RuntimeError("AI analysis services unavailable")
 
 # Scraping function using Apify
 async def scrape_product(url):
@@ -43,146 +50,168 @@ async def scrape_product(url):
     async with httpx.AsyncClient() as client:
         # Start the scraping task
         response = await client.post(
-            "https://api.apify.com/v2/actor-tasks/your_task_id/runs",
+            "https://api.apify.com/v2/acts/apify~web-scraper/runs",
             headers={"Authorization": f"Bearer {apify_token}"},
-            json={"startUrls": [{"url": url}]}
+            json={
+                "startUrls": [{"url": url}],
+                "pageFunction": """
+                async function pageFunction(context) {
+                    const { $, request } = context;
+                    
+                    // Common selectors for major e-commerce sites
+                    const selectors = {
+                        amazon: {
+                            title: '#productTitle',
+                            price: '.a-price .a-offscreen',
+                            description: '#feature-bullets, #productDescription',
+                            reviews: '.review-text'
+                        },
+                        ebay: {
+                            title: '.x-item-title__mainTitle',
+                            price: '.x-price-primary',
+                            description: '.x-about-this-item',
+                            reviews: '.ebay-review-section .review-item-content'
+                        },
+                        default: {
+                            title: 'h1',
+                            price: '[data-price], .price, .product-price',
+                            description: '[data-description], .description, .product-description',
+                            reviews: '.review, .product-review, .customer-review'
+                        }
+                    };
+                    
+                    // Determine site type from URL
+                    let site = 'default';
+                    if (request.url.includes('amazon')) site = 'amazon';
+                    if (request.url.includes('ebay')) site = 'ebay';
+                    
+                    const selector = selectors[site];
+                    
+                    return {
+                        title: $(selector.title).first().text().trim(),
+                        price: $(selector.price).first().text().trim(),
+                        description: $(selector.description).text().trim(),
+                        reviews: $(selector.reviews).map((i, el) => $(el).text().trim()).get(),
+                        url: request.url
+                    };
+                }
+                """
+            }
         )
-        run_data = response.json()
-        run_id = run_data.get("data", {}).get("id")
+        run_id = response.json()["id"]
         
-        if not run_id:
-            raise ValueError(f"Failed to start Apify task: {run_data}")
-        
-        # Wait for the task to complete
+        # Wait for results
         while True:
-            status_response = await client.get(
-                f"https://api.apify.com/v2/actor-runs/{run_id}",
+            await asyncio.sleep(2)
+            status = await client.get(
+                f"https://api.apify.com/v2/acts/apify~web-scraper/runs/{run_id}",
                 headers={"Authorization": f"Bearer {apify_token}"}
             )
-            status = status_response.json().get("data", {}).get("status")
-            if status == "SUCCEEDED":
+            if status.json()["status"] == "SUCCEEDED":
                 break
-            elif status in ["FAILED", "ABORTED", "TIMED-OUT"]:
-                raise ValueError(f"Apify task failed with status: {status}")
-            await asyncio.sleep(2)
         
-        # Get the results
-        dataset_response = await client.get(
-            f"https://api.apify.com/v2/actor-runs/{run_id}/dataset/items",
+        # Get results
+        results = await client.get(
+            f"https://api.apify.com/v2/acts/apify~web-scraper/runs/{run_id}/dataset/items",
             headers={"Authorization": f"Bearer {apify_token}"}
         )
-        return dataset_response.json()
+        return results.json()[0]
 
-# Extract pros and cons from reviews
-def extract_pros_cons(reviews):
-    # Simple extraction based on keywords
+def parse_pros_cons(analysis_text: str):
+    """Parse pros and cons from the generated analysis text."""
     pros = []
     cons = []
+    current_list = None
     
-    positive_keywords = ["ottimo", "eccellente", "buono", "perfetto", "consigliato"]
-    negative_keywords = ["scarso", "pessimo", "difettoso", "problema", "delusione"]
+    for line in analysis_text.split('\n'):
+        line = line.strip().lower()
+        if 'pros:' in line or 'advantages:' in line or 'benefits:' in line:
+            current_list = pros
+        elif 'cons:' in line or 'disadvantages:' in line or 'drawbacks:' in line:
+            current_list = cons
+        elif current_list is not None and line.startswith('-'):
+            current_list.append(line[1:].strip())
     
-    for review in reviews:
-        review_lower = review.lower()
-        
-        # Check for positive aspects
-        for keyword in positive_keywords:
-            if keyword in review_lower:
-                sentence = next((s for s in review.split(".") if keyword.lower() in s.lower()), "")
-                if sentence and sentence not in pros:
-                    pros.append(sentence.strip())
-        
-        # Check for negative aspects
-        for keyword in negative_keywords:
-            if keyword in review_lower:
-                sentence = next((s for s in review.split(".") if keyword.lower() in s.lower()), "")
-                if sentence and sentence not in cons:
-                    cons.append(sentence.strip())
-    
-    return {"pros": pros[:3], "cons": cons[:3]}  # Return top 3 pros and cons
-
-# Calculate value score
-def analyze_value(data):
-    try:
-        # Extract prices
-        prices = [float(p["price"].replace("€", "").replace(",", ".")) 
-                 for p in data.get("prices", []) if "price" in p]
-        
-        if not prices:
-            return 0.0
-        
-        avg_price = sum(prices) / len(prices)
-        
-        # Get sentiment scores
-        reviews = data.get("reviews", [])
-        if not reviews:
-            return 0.0
-        
-        # Get average sentiment (1-5 scale)
-        sentiments = []
-        for review in reviews[:10]:  # Analyze up to 10 reviews
-            try:
-                rating = analyze_sentiment(review)
-                sentiments.append(rating)
-            except Exception:
-                continue
-        
-        if not sentiments:
-            return 0.0
-        
-        avg_sentiment = sum(sentiments) / len(sentiments)
-        
-        # Calculate value score (sentiment / normalized price)
-        # Higher score = better value for money
-        value_score = (avg_sentiment * 100) / (avg_price + 1)  # +1 to avoid division by zero
-        
-        # Normalize to 0-5 scale
-        return min(5.0, max(0.0, value_score / 20))
-    
-    except Exception as e:
-        print(f"Error analyzing value: {e}")
-        return 0.0
-
-# API endpoints
-@app.get("/")
-async def root():
-    return {"message": "WorthIt! API is running"}
+    return {
+        'pros': pros[:3] if pros else ['No clear advantages found'],
+        'cons': cons[:3] if cons else ['No clear disadvantages found']
+    }
 
 @app.post("/analyze")
-async def analyze_product_endpoint(url: str):
+async def analyze_product(url: str):
     try:
-        # Scrape product data
-        product_data = await scrape_product(url)
-        
-        # Analyze the product
-        value_score = analyze_value(product_data)
-        pros_cons = extract_pros_cons(product_data.get("reviews", []))
-        
-        # Prepare analysis result
-        analysis = {
-            "url": url,
-            "value_score": value_score,
-            "pros_cons": pros_cons,
-            "recommendation": "🟢 Ottimo" if value_score >= 4.0 else 
-                           "🟡 Accettabile" if value_score >= 3.0 else 
-                           "🔴 Scarso"
-        }
-        
-        # Save to in-memory database (temporary solution)
-        products_db.append(analysis)
-        
-        return analysis
-    
-    except Exception as e:
-        return {"error": str(e)}
+        if not url or not (url.startswith('http://') or url.startswith('https://')):
+            raise HTTPException(status_code=400, detail="Invalid URL provided")
 
-@app.get("/products")
-async def get_products():
-    try:
-        # Return products from in-memory database (temporary solution)
-        return products_db
+        # Scrape product data
+        try:
+            product_data = await scrape_product(url)
+        except ValueError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+        except Exception as e:
+            logger.error(f"Scraping error: {e}")
+            raise HTTPException(status_code=503, detail="Unable to fetch product data")
+
+        if not product_data.get('reviews'):
+            logger.warning(f"No reviews found for product: {url}")
+
+        # Analyze reviews sentiment
+        try:
+            sentiments = []
+            for review in product_data.get('reviews', []):
+                result = sentiment_analyzer(review)[0]
+                score = int(result['label'].split('stars')[0])
+                sentiments.append(score)
+
+            avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 3
+        except Exception as e:
+            logger.error(f"Sentiment analysis error: {e}")
+            avg_sentiment = 3  # Fallback to neutral sentiment
+
+        # Generate pros/cons analysis
+        try:
+            analysis_prompt = f"""Analyze this product description and provide a structured list of pros and cons. Format your response as follows:
+
+Pros:
+- [advantage 1]
+- [advantage 2]
+- [advantage 3]
+
+Cons:
+- [disadvantage 1]
+- [disadvantage 2]
+- [disadvantage 3]
+
+Product description:
+{product_data['description']}"""
+
+            analysis_result = pros_cons_analyzer(analysis_prompt, max_length=500, num_return_sequences=1)[0]
+            pros_cons = parse_pros_cons(analysis_result['generated_text'])
+        except Exception as e:
+            logger.error(f"Pros/cons analysis error: {e}")
+            pros_cons = {
+                'pros': ['Analysis unavailable'],
+                'cons': ['Analysis unavailable']
+            }
+
+        # Calculate value score (1-10)
+        value_score = min(10, max(1, avg_sentiment * 2))  # Ensure score is between 1-10
+
+        return {
+            "title": product_data.get("title", "Unknown Product"),
+            "price": product_data.get("price", "Price not available"),
+            "value_score": value_score,
+            "sentiment_score": avg_sentiment,
+            "pros": pros_cons['pros'],
+            "cons": pros_cons['cons'],
+            "recommendation": "Worth it!" if value_score >= 7 else "Think twice!"
+        }
+
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 if __name__ == "__main__":
     import uvicorn
