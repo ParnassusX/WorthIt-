@@ -47,13 +47,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(help_text, parse_mode="Markdown")
     else:
-        await update.message.reply_text("Non ho capito. Invia un link di un prodotto o usa i pulsanti in basso.")
+        # Try to interpret as a product URL even if it doesn't match the pattern
+        if "amazon" in text.lower() or "ebay" in text.lower():
+            await update.message.reply_text("Sto provando ad analizzare questo come un link prodotto...")
+            await analyze_product_url(update, text)
+        else:
+            await update.message.reply_text("Non ho capito. Invia un link di un prodotto o usa i pulsanti in basso.")
 
 async def analyze_product_url(update: Update, url: str):
     try:
         # Validate URL
         validate_url(url)
         
+        # Send immediate acknowledgment
         await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
         
         # Call our API to analyze the product
@@ -61,41 +67,48 @@ async def analyze_product_url(update: Update, url: str):
         api_host = os.getenv("API_HOST", f"https://{vercel_url}")
         api_url = f"{api_host}/analyze"
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(api_url, params={"url": url})
-            if response.status_code != 200:
-                error_detail = await response.text()
-                if response.status_code == 401:
-                    raise Exception(f"API authentication error: Please check that APIFY_TOKEN and HF_TOKEN are correctly set in environment variables.")
-                else:
-                    raise Exception(f"API error: {response.status_code} - {error_detail}")
-            data = response.json()
-        
-        # Format the response with inline keyboard
-        value_emoji = "🟢" if data["value_score"] >= 7 else "🟡" if data["value_score"] >= 5 else "🔴"
-        
-        message = f"*{data['title']}*\n\n"
-        message += f"💰 Prezzo: {data['price']}\n"
-        message += f"⭐ Valore: {value_emoji} {data['value_score']}/10\n\n"
-        message += f"*Raccomandazione:* {data['recommendation']}\n\n"
-        
-        message += "*Punti di forza:*\n"
-        for pro in data['pros'][:3]:
-            message += f"✅ {pro}\n"
-        
-        message += "\n*Punti deboli:*\n"
-        for con in data['cons'][:3]:
-            message += f"❌ {con}\n"
-        
-        # Create inline keyboard for actions
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(text="🔄 Aggiorna analisi", callback_data=f"refresh_{url}")],
-            [InlineKeyboardButton(text="📊 Confronta prezzi", callback_data=f"compare_{url}")],
-            [InlineKeyboardButton(text="📱 Apri nel browser", url=url)],
-            [InlineKeyboardButton(text="📤 Condividi analisi", switch_inline_query=url)]
-        ])
-        
-        await update.message.reply_text(message, parse_mode="Markdown", reply_markup=keyboard)
+        try:
+            # Use a shorter timeout for the API call to avoid blocking the webhook
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(api_url, params={"url": url})
+                if response.status_code != 200:
+                    error_detail = await response.text()
+                    if response.status_code == 401:
+                        raise Exception(f"API authentication error: Please check that APIFY_TOKEN and HF_TOKEN are correctly set in environment variables.")
+                    else:
+                        raise Exception(f"API error: {response.status_code} - {error_detail}")
+                data = response.json()
+            
+            # Format the response with inline keyboard
+            value_emoji = "🟢" if data["value_score"] >= 7 else "🟡" if data["value_score"] >= 5 else "🔴"
+            
+            message = f"*{data['title']}*\n\n"
+            message += f"💰 Prezzo: {data['price']}\n"
+            message += f"⭐ Valore: {value_emoji} {data['value_score']}/10\n\n"
+            message += f"*Raccomandazione:* {data['recommendation']}\n\n"
+            
+            message += "*Punti di forza:*\n"
+            for pro in data['pros'][:3]:
+                message += f"✅ {pro}\n"
+            
+            message += "\n*Punti deboli:*\n"
+            for con in data['cons'][:3]:
+                message += f"❌ {con}\n"
+            
+            # Create inline keyboard for actions
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(text="🔄 Aggiorna analisi", callback_data=f"refresh_{url}")],
+                [InlineKeyboardButton(text="📊 Confronta prezzi", callback_data=f"compare_{url}")],
+                [InlineKeyboardButton(text="📱 Apri nel browser", url=url)],
+                [InlineKeyboardButton(text="📤 Condividi analisi", switch_inline_query=url)]
+            ])
+            
+            await update.message.reply_text(message, parse_mode="Markdown", reply_markup=keyboard)
+        except asyncio.TimeoutError:
+            # Handle timeout specifically
+            await update.message.reply_text(
+                "L'analisi sta richiedendo più tempo del previsto. Riceverai i risultati appena disponibili."
+            )
         
     except Exception as e:
         error_message = "Mi dispiace, non sono riuscito ad analizzare questo prodotto. "

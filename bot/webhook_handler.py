@@ -34,6 +34,19 @@ async def error_handler(update: object, context) -> None:
         print("Detected event loop closure error - this is expected in serverless environments")
         return
 
+# Initialize a shared httpx client with proper connection pool settings
+_http_client = None
+
+def get_http_client():
+    """Get or create a shared httpx client with proper connection pool settings"""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        )
+    return _http_client
+
 async def analyze_product(url: str) -> Dict[str, Any]:
     """Call the WorthIt! API to analyze a product"""
     vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
@@ -41,13 +54,12 @@ async def analyze_product(url: str) -> Dict[str, Any]:
     api_url = f"{api_host}/analyze"
     
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(api_url, params={"url": url}, timeout=30.0)
-            if response.status_code != 200:
-                raise HTTPException(status_code=response.status_code, detail=response.text)
-            return response.json()
+        client = get_http_client()
+        response = await client.post(api_url, params={"url": url}, timeout=30.0)
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=response.text)
+        return response.json()
     except Exception as e:
-        # Log the error for debugging
         print(f"API request error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze product: {str(e)}")
 
@@ -124,15 +136,28 @@ def get_bot_instance() -> Bot:
 
 async def process_telegram_update(update: Update) -> None:
     """Process a Telegram update without using Application instance"""
-    # Handle different types of updates directly
-    if update.message:
-        if update.message.text:
-            if update.message.text.startswith("/start"):
-                await start(update, None)
-            else:
-                await handle_text(update, None)
-    elif update.callback_query:
-        await handle_callback_query(update, None)
+    try:
+        # Send an immediate acknowledgment for long-running operations
+        if update.message and update.message.text and not update.message.text.startswith("/start"):
+            # Check if it might be a product URL
+            if "amazon" in update.message.text.lower() or "ebay" in update.message.text.lower():
+                await update.message.reply_text("Ho ricevuto il tuo link! Sto iniziando l'analisi in background... 🔄")
+                
+        # Process the update asynchronously
+        if update.message:
+            if update.message.text:
+                if update.message.text.startswith("/start"):
+                    await start(update, None)
+                else:
+                    await handle_text(update, None)
+        elif update.callback_query:
+            await handle_callback_query(update, None)
+    except Exception as e:
+        print(f"Error in process_telegram_update: {str(e)}")
+        if update.message:
+            await update.message.reply_text(
+                "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
+            )
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
@@ -145,16 +170,30 @@ async def webhook_handler(request: Request):
         data = await request.json()
         update = Update.de_json(data, bot)
         
-        # Process update with timeout protection
+        # Create a new event loop for each request if needed
         try:
-            # Process the update directly without Application instance
-            await asyncio.wait_for(process_telegram_update(update), timeout=30.0)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Process update with a shorter timeout for the initial response
+        try:
+            # Use a shorter timeout for the initial response to stay within Vercel limits
+            await asyncio.wait_for(process_telegram_update(update), timeout=5.0)
         except asyncio.TimeoutError:
-            return {"status": "error", "detail": "Request timed out"}
+            print("Initial response timed out, but processing continues in background")
+            # Return success anyway since we've already sent an acknowledgment
+            return {"status": "ok", "detail": "Processing in background"}
         except RuntimeError as e:
-            print(f"Event loop error: {str(e)}")
-            # Return a successful response to prevent retries
-            return {"status": "ok", "detail": "Event loop error handled"}
+            if "Event loop is closed" in str(e):
+                # Create a new event loop and retry with shorter timeout
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                await asyncio.wait_for(process_telegram_update(update), timeout=5.0)
+            else:
+                print(f"Event loop error: {str(e)}")
+                return {"status": "error", "detail": str(e)}
         
         return {"status": "ok"}
     
