@@ -141,23 +141,51 @@ async def process_telegram_update(update: Update) -> None:
         if update.message and update.message.text and not update.message.text.startswith("/start"):
             # Check if it might be a product URL
             if "amazon" in update.message.text.lower() or "ebay" in update.message.text.lower():
-                await update.message.reply_text("Ho ricevuto il tuo link! Sto iniziando l'analisi in background... 🔄")
+                try:
+                    await update.message.reply_text("Ho ricevuto il tuo link! Sto iniziando l'analisi in background... 🔄")
+                except Exception as ack_error:
+                    print(f"Failed to send acknowledgment: {ack_error}")
                 
-        # Process the update asynchronously
+        # Process the update with proper error handling for each step
         if update.message:
             if update.message.text:
-                if update.message.text.startswith("/start"):
-                    await start(update, None)
-                else:
-                    await handle_text(update, None)
+                try:
+                    if update.message.text.startswith("/start"):
+                        await start(update, None)
+                    else:
+                        await handle_text(update, None)
+                except RuntimeError as re:
+                    if "Event loop is closed" in str(re):
+                        print("Ignoring closed event loop error in message handler")
+                    else:
+                        raise
+                except Exception as msg_error:
+                    print(f"Error handling message: {msg_error}")
+                    try:
+                        await update.message.reply_text(
+                            "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
+                        )
+                    except Exception:
+                        pass
         elif update.callback_query:
-            await handle_callback_query(update, None)
+            try:
+                await handle_callback_query(update, None)
+            except RuntimeError as re:
+                if "Event loop is closed" in str(re):
+                    print("Ignoring closed event loop error in callback handler")
+                else:
+                    raise
+            except Exception as cb_error:
+                print(f"Error handling callback query: {cb_error}")
     except Exception as e:
         print(f"Error in process_telegram_update: {str(e)}")
         if update.message:
-            await update.message.reply_text(
-                "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
-            )
+            try:
+                await update.message.reply_text(
+                    "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
+                )
+            except Exception:
+                pass
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
@@ -170,30 +198,20 @@ async def webhook_handler(request: Request):
         data = await request.json()
         update = Update.de_json(data, bot)
         
-        # Create a new event loop for each request if needed
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        # Process update with a shorter timeout for the initial response
+        # Process the update directly without manipulating event loops
+        # This is safer in serverless environments
         try:
             # Use a shorter timeout for the initial response to stay within Vercel limits
+            # but don't create or manipulate event loops
             await asyncio.wait_for(process_telegram_update(update), timeout=5.0)
         except asyncio.TimeoutError:
             print("Initial response timed out, but processing continues in background")
             # Return success anyway since we've already sent an acknowledgment
             return {"status": "ok", "detail": "Processing in background"}
-        except RuntimeError as e:
-            if "Event loop is closed" in str(e):
-                # Create a new event loop and retry with shorter timeout
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                await asyncio.wait_for(process_telegram_update(update), timeout=5.0)
-            else:
-                print(f"Event loop error: {str(e)}")
-                return {"status": "error", "detail": str(e)}
+        except Exception as e:
+            print(f"Error processing update: {str(e)}")
+            # Still return success to Telegram to prevent retries
+            return {"status": "ok", "detail": "Error handled gracefully"}
         
         return {"status": "ok"}
     

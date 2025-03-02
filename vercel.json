@@ -16,6 +16,14 @@
   ],
   "routes": [
     {
+      "src": "/favicon.ico",
+      "dest": "/web-app/favicon.ico"
+    },
+    {
+      "src": "/favicon.png",
+      "dest": "/web-app/favicon.png"
+    },
+    {
       "src": "/webhook",
       "dest": "bot/webhook_handler.py"
     },
