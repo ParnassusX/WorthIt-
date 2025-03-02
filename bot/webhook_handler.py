@@ -120,16 +120,8 @@ async def webhook_handler(request: Request):
         data = await request.json()
         update = Update.de_json(data, application.bot)
         
-        # Create a new event loop for processing updates
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            # Process update in the new loop
-            await application.process_update(update)
-        finally:
-            # Clean up the loop
-            loop.close()
+        # Process update in the current event loop instead of creating a new one
+        await application.process_update(update)
         
         return {"status": "ok"}
     

@@ -64,7 +64,11 @@ async def analyze_product_url(update: Update, url: str):
         async with httpx.AsyncClient() as client:
             response = await client.post(api_url, params={"url": url})
             if response.status_code != 200:
-                raise Exception(f"API error: {response.status_code}")
+                error_detail = await response.text()
+                if response.status_code == 401:
+                    raise Exception(f"API authentication error: Please check that APIFY_TOKEN and HF_TOKEN are correctly set in environment variables.")
+                else:
+                    raise Exception(f"API error: {response.status_code} - {error_detail}")
             data = response.json()
         
         # Format the response with inline keyboard
@@ -97,6 +101,8 @@ async def analyze_product_url(update: Update, url: str):
         error_message = "Mi dispiace, non sono riuscito ad analizzare questo prodotto. "
         if "URL not supported" in str(e):
             error_message += "Per favore, usa un link di Amazon o eBay."
+        elif "API authentication error" in str(e):
+            error_message += "C'è un problema con l'autenticazione API. L'amministratore deve verificare le chiavi API."
         else:
             error_message += f"Errore: {str(e)}"
         await update.message.reply_text(error_message)
