@@ -63,13 +63,47 @@ async def analyze_product(url: str) -> Dict[str, Any]:
     
     try:
         client = get_http_client()
-        response = await client.post(api_url, params={"url": url}, timeout=30.0)
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=response.text)
-        return response.json()
-    except Exception as e:
-        print(f"API request error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to analyze product: {str(e)}")
+        try:
+            response = await asyncio.wait_for(
+                client.post(api_url, params={"url": url}),
+                timeout=30.0
+            )
+            if response.status_code != 200:
+                error_detail = await response.text()
+                if response.status_code == 401:
+                    raise HTTPException(
+                        status_code=401,
+                        detail="API authentication error: Please check API tokens"
+                    )
+                elif response.status_code == 400:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid product URL: {error_detail}"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"API error: {error_detail}"
+                    )
+            return response.json()
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail="Analysis timed out. Please try again later."
+            )
+        except Exception as e:
+            print(f"API request error: {str(e)}")
+            if "Connection refused" in str(e):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Service temporarily unavailable. Please try again later."
+                )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to analyze product: {str(e)}"
+            )
+    finally:
+        await close_http_client()
 
 async def format_analysis_response(data: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
     """Format the analysis response for Telegram"""
@@ -144,7 +178,6 @@ def get_bot_instance() -> Bot:
 
 async def process_telegram_update(update: Update) -> None:
     """Process a Telegram update without using Application instance"""
-    # Create a new client for each update processing to avoid connection pool issues
     client = None
     try:
         client = get_http_client()
@@ -154,7 +187,6 @@ async def process_telegram_update(update: Update) -> None:
             # Check if it might be a product URL
             if "amazon" in update.message.text.lower() or "ebay" in update.message.text.lower():
                 try:
-                    # Use a short timeout for acknowledgment
                     await asyncio.wait_for(
                         update.message.reply_text("Ho ricevuto il tuo link! Sto iniziando l'analisi in background... 🔄"),
                         timeout=2.0
@@ -172,6 +204,23 @@ async def process_telegram_update(update: Update) -> None:
                         await start(update, None)
                     else:
                         await handle_text(update, None)
+                except HTTPException as http_error:
+                    error_message = "Mi dispiace, "
+                    if http_error.status_code == 401:
+                        error_message += "c'è un problema con l'autenticazione API. Riprova più tardi."
+                    elif http_error.status_code == 400:
+                        error_message += "il link del prodotto non è valido. Assicurati di usare un link di Amazon o eBay."
+                    elif http_error.status_code == 504:
+                        error_message += "l'analisi sta richiedendo troppo tempo. Riprova più tardi."
+                    elif http_error.status_code == 503:
+                        error_message += "il servizio è temporaneamente non disponibile. Riprova più tardi."
+                    else:
+                        error_message += "si è verificato un errore durante l'analisi. Riprova più tardi."
+                    
+                    await asyncio.wait_for(
+                        update.message.reply_text(error_message),
+                        timeout=2.0
+                    )
                 except RuntimeError as re:
                     if "Event loop is closed" in str(re):
                         print("Ignoring closed event loop error in message handler")
@@ -180,7 +229,6 @@ async def process_telegram_update(update: Update) -> None:
                 except Exception as msg_error:
                     print(f"Error handling message: {msg_error}")
                     try:
-                        # Use a short timeout for error messages
                         await asyncio.wait_for(
                             update.message.reply_text(
                                 "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
@@ -203,7 +251,6 @@ async def process_telegram_update(update: Update) -> None:
         print(f"Error in process_telegram_update: {str(e)}")
         if update.message:
             try:
-                # Use a short timeout for error messages
                 await asyncio.wait_for(
                     update.message.reply_text(
                         "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
@@ -213,7 +260,6 @@ async def process_telegram_update(update: Update) -> None:
             except Exception:
                 pass
     finally:
-        # Always ensure we close the client to prevent connection pool exhaustion
         if client is not None:
             await close_http_client()
 
