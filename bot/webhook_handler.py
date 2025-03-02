@@ -8,6 +8,7 @@ import re
 import asyncio
 from dotenv import load_dotenv
 from .bot import start, handle_text
+from .http_client import get_http_client, close_http_client
 
 app = FastAPI()
 # We'll use a more stateless approach instead of a global application instance
@@ -35,30 +36,7 @@ async def error_handler(update: object, context) -> None:
     print(f"Exception details: {context.error.__class__.__name__}: {context.error}")
 
 
-# Initialize a shared httpx client with proper connection pool settings
-_http_client = None
-
-def get_http_client():
-    """Get or create a shared httpx client with proper connection pool settings"""
-    global _http_client
-    if _http_client is None:
-        _http_client = httpx.AsyncClient(
-            timeout=10.0,  # Reduced timeout
-            limits=httpx.Limits(
-                max_keepalive_connections=5,  # Reduced from 20
-                max_connections=10,  # Reduced from 50
-                keepalive_expiry=5.0  # Added expiry time
-            ),
-            http2=False
-        )
-    return _http_client
-
-async def close_http_client():
-    """Close the shared httpx client to free resources"""
-    global _http_client
-    if _http_client is not None:
-        await _http_client.aclose()
-        _http_client = None
+# HTTP client functions are now imported from http_client.py
 
 async def analyze_product(url: str) -> Dict[str, Any]:
     """Call the WorthIt! API to analyze a product"""

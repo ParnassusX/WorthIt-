@@ -6,7 +6,7 @@ import os
 import re
 import asyncio
 from api.security import validate_url
-from .webhook_handler import get_http_client, close_http_client
+from .http_client import get_http_client, close_http_client
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [

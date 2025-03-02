@@ -86,84 +86,132 @@ async def generate_pros_cons(prompt):
 async def scrape_product(url):
     apify_token = os.getenv("APIFY_TOKEN")
     if not apify_token:
+        logger.error("Missing Apify token. Set APIFY_TOKEN environment variable.")
         raise ValueError("Missing Apify token. Set APIFY_TOKEN environment variable.")
     
-    async with httpx.AsyncClient() as client:
-        # Start the scraping task
-        response = await client.post(
-            "https://api.apify.com/v2/acts/apify~web-scraper/runs",
-            headers={"Authorization": f"Bearer {apify_token}"},
-            json={
-                "startUrls": [{"url": url}],
-                "pageFunction": """
-                async function pageFunction(context) {
-                    const { $, request } = context;
-                    
-                    // Common selectors for major e-commerce sites
-                    const selectors = {
-                        amazon: {
-                            title: '#productTitle, #title',
-                            price: '.a-price .a-offscreen, #price_inside_buybox, #priceblock_ourprice',
-                            description: '#feature-bullets, #productDescription, #productDetails',
-                            reviews: '.review-text, .review-text-content, [data-hook="review-body"]'
-                        },
-                        ebay: {
-                            title: '.x-item-title__mainTitle',
-                            price: '.x-price-primary',
-                            description: '.x-about-this-item',
-                            reviews: '.ebay-review-section .review-item-content'
-                        },
-                        default: {
-                            title: 'h1',
-                            price: '[data-price], .price, .product-price',
-                            description: '[data-description], .description, .product-description',
-                            reviews: '.review, .product-review, .customer-review'
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Start the scraping task
+            try:
+                response = await client.post(
+                    "https://api.apify.com/v2/acts/apify~web-scraper/runs",
+                    headers={"Authorization": f"Bearer {apify_token}"},
+                    json={
+                        "startUrls": [{"url": url}],
+                        "pageFunction": """
+                        async function pageFunction(context) {
+                            const { $, request } = context;
+                            
+                            // Common selectors for major e-commerce sites
+                            const selectors = {
+                                amazon: {
+                                    title: '#productTitle, #title',
+                                    price: '.a-price .a-offscreen, #price_inside_buybox, #priceblock_ourprice',
+                                    description: '#feature-bullets, #productDescription, #productDetails',
+                                    reviews: '.review-text, .review-text-content, [data-hook="review-body"]'
+                                },
+                                ebay: {
+                                    title: '.x-item-title__mainTitle',
+                                    price: '.x-price-primary',
+                                    description: '.x-about-this-item',
+                                    reviews: '.ebay-review-section .review-item-content'
+                                },
+                                default: {
+                                    title: 'h1',
+                                    price: '[data-price], .price, .product-price',
+                                    description: '[data-description], .description, .product-description',
+                                    reviews: '.review, .product-review, .customer-review'
+                                }
+                            };
+                            
+                            // Determine site type from URL
+                            let site = 'default';
+                            if (request.url.includes('amazon')) site = 'amazon';
+                            if (request.url.includes('ebay')) site = 'ebay';
+                            
+                            const selector = selectors[site];
+                            
+                            return {
+                                title: $(selector.title).first().text().trim(),
+                                price: $(selector.price).first().text().trim(),
+                                description: $(selector.description).text().trim(),
+                                reviews: $(selector.reviews).map((i, el) => $(el).text().trim()).get(),
+                                url: request.url
+                            };
                         }
-                    };
+                        """
+                    }
+                )
+                response.raise_for_status()
+                run_data = response.json()
+                if not run_data or "id" not in run_data:
+                    logger.error(f"Invalid response from Apify: {response.text}")
+                    raise Exception("Failed to start scraping task")
                     
-                    // Determine site type from URL
-                    let site = 'default';
-                    if (request.url.includes('amazon')) site = 'amazon';
-                    if (request.url.includes('ebay')) site = 'ebay';
-                    
-                    const selector = selectors[site];
-                    
-                    return {
-                        title: $(selector.title).first().text().trim(),
-                        price: $(selector.price).first().text().trim(),
-                        description: $(selector.description).text().trim(),
-                        reviews: $(selector.reviews).map((i, el) => $(el).text().trim()).get(),
-                        url: request.url
-                    };
-                }
-                """
-            }
-        )
-        run_id = response.json()["id"]
-        
-        # Wait for results
-        while True:
-            await asyncio.sleep(2)
-            status = await client.get(
-                f"https://api.apify.com/v2/acts/apify~web-scraper/runs/{run_id}",
-                headers={"Authorization": f"Bearer {apify_token}"}
-            )
-            if status.json()["status"] == "SUCCEEDED":
-                break
-        
-        # Get results
-        results = await client.get(
-            f"https://api.apify.com/v2/acts/apify~web-scraper/runs/{run_id}/dataset/items",
-            headers={"Authorization": f"Bearer {apify_token}"}
-        )
-        
-        # Check if we got any results
-        data = results.json()
-        if not data or len(data) == 0:
-            logger.error(f"No data returned from scraper for URL: {url}")
-            raise Exception(f"Failed to extract product data from {url}")
+                run_id = run_data["id"]
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP error starting scraping task: {e.response.status_code} - {e.response.text}")
+                if e.response.status_code == 401:
+                    raise ValueError("Invalid Apify token. Check your APIFY_TOKEN environment variable.")
+                raise Exception(f"Failed to start scraping task: {str(e)}")
+            except httpx.RequestError as e:
+                logger.error(f"Request error starting scraping task: {str(e)}")
+                raise Exception(f"Connection error: {str(e)}")
+            except Exception as e:
+                logger.error(f"Unexpected error starting scraping task: {str(e)}")
+                raise Exception(f"Failed to start scraping task: {str(e)}")
             
-        return data[0]
+            # Wait for results with timeout protection
+            max_wait_time = 25  # seconds
+            start_time = asyncio.get_event_loop().time()
+            
+            while True:
+                if asyncio.get_event_loop().time() - start_time > max_wait_time:
+                    logger.error(f"Scraping timeout for URL: {url}")
+                    raise Exception("Scraping operation timed out")
+                    
+                try:
+                    await asyncio.sleep(2)
+                    status_response = await client.get(
+                        f"https://api.apify.com/v2/acts/apify~web-scraper/runs/{run_id}",
+                        headers={"Authorization": f"Bearer {apify_token}"}
+                    )
+                    status_response.raise_for_status()
+                    status_data = status_response.json()
+                    
+                    if status_data.get("status") == "SUCCEEDED":
+                        break
+                    elif status_data.get("status") in ["FAILED", "ABORTED", "TIMED-OUT"]:
+                        logger.error(f"Scraping task failed with status: {status_data.get('status')}")
+                        raise Exception(f"Scraping task failed: {status_data.get('status')}")
+                except Exception as e:
+                    logger.error(f"Error checking scraping status: {str(e)}")
+                    raise Exception(f"Failed to check scraping status: {str(e)}")
+            
+            # Get results
+            try:
+                results_response = await client.get(
+                    f"https://api.apify.com/v2/acts/apify~web-scraper/runs/{run_id}/dataset/items",
+                    headers={"Authorization": f"Bearer {apify_token}"}
+                )
+                results_response.raise_for_status()
+                data = results_response.json()
+            except Exception as e:
+                logger.error(f"Error fetching scraping results: {str(e)}")
+                raise Exception(f"Failed to fetch scraping results: {str(e)}")
+            
+            # Check if we got any results
+            if not data or len(data) == 0:
+                logger.error(f"No data returned from scraper for URL: {url}")
+                raise Exception(f"Failed to extract product data from {url}")
+                
+            return data[0]
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout while scraping product: {url}")
+        raise Exception("Request timed out while scraping product")
+    except Exception as e:
+        logger.error(f"Error in scrape_product: {str(e)}")
+        raise
 
 def parse_pros_cons(analysis_text: str):
     """Parse pros and cons from the generated analysis text."""
@@ -195,10 +243,15 @@ async def analyze_product(url: str):
         try:
             product_data = await scrape_product(url)
         except ValueError as e:
+            logger.error(f"API authentication error: {e}")
             raise HTTPException(status_code=401, detail=str(e))
         except Exception as e:
             logger.error(f"Scraping error: {e}")
             raise HTTPException(status_code=503, detail="Unable to fetch product data")
+
+        if not product_data:
+            logger.error(f"No product data returned for URL: {url}")
+            raise HTTPException(status_code=404, detail="Product not found")
 
         if not product_data.get('reviews'):
             logger.warning(f"No reviews found for product: {url}")
@@ -206,7 +259,8 @@ async def analyze_product(url: str):
         # Prepare reviews data structure for ML processor
         reviews = []
         for review_text in product_data.get('reviews', []):
-            reviews.append({"review": review_text})
+            if isinstance(review_text, str) and review_text.strip():
+                reviews.append({"review": review_text.strip()})
             
         # Use ml_processor for sentiment analysis
         try:
@@ -217,21 +271,21 @@ async def analyze_product(url: str):
             avg_sentiment = 3  # Fallback to neutral sentiment
             sentiment_data = {"average_sentiment": avg_sentiment}
 
+        # Prepare product data structure with validation
+        processed_product_data = {
+            "title": product_data.get("title", "Unknown Product").strip(),
+            "description": product_data.get("description", "").strip(),
+            "features": [],
+            "price": product_data.get("price", "Price not available").strip(),
+            "url": url
+        }
+
         # Use ml_processor for pros/cons extraction
         try:
-            # Prepare product data structure
-            processed_product_data = {
-                "title": product_data.get("title", "Unknown Product"),
-                "description": product_data.get("description", ""),
-                "features": [],  # Extract features if available in your scraping
-                "price": product_data.get("price", "Price not available"),
-                "url": url
-            }
-            
             pros, cons = await extract_product_pros_cons(reviews, processed_product_data)
             pros_cons = {
-                'pros': pros,
-                'cons': cons
+                'pros': pros if pros else ['Analysis unavailable'],
+                'cons': cons if cons else ['Analysis unavailable']
             }
         except Exception as e:
             logger.error(f"Pros/cons analysis error: {e}")
@@ -248,8 +302,8 @@ async def analyze_product(url: str):
             value_score = min(10, max(1, avg_sentiment * 2))  # Fallback calculation
 
         return {
-            "title": product_data.get("title", "Unknown Product"),
-            "price": product_data.get("price", "Price not available"),
+            "title": processed_product_data["title"],
+            "price": processed_product_data["price"],
             "value_score": value_score,
             "sentiment_score": avg_sentiment,
             "pros": pros_cons['pros'],
@@ -258,11 +312,11 @@ async def analyze_product(url: str):
         }
 
     except HTTPException as e:
+        logger.error(f"HTTP error in analyze_product: {e.status_code} - {e.detail}")
         raise e
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail="An unexpected error occurred")
-
+        logger.error(f"Unexpected error in analyze_product: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 @app.get("/")
 async def health_check():
     """Health check endpoint"""
