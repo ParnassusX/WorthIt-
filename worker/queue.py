@@ -4,7 +4,7 @@ import os
 import asyncio
 import logging
 from typing import Dict, Any
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 
 logger = logging.getLogger(__name__)
 
@@ -12,16 +12,34 @@ class TaskQueue:
     def __init__(self):
         self.redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
         self.queue_name = 'worthit_tasks'
+        self.redis = None
+        self.pool = None
         self.connect_with_retry()
     
     @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
     def connect_with_retry(self):
         try:
-            self.redis = redis.from_url(self.redis_url)
+            # Create a connection pool
+            self.pool = redis.ConnectionPool.from_url(
+                self.redis_url,
+                max_connections=10,
+                socket_timeout=5.0,
+                socket_connect_timeout=5.0,
+                retry_on_timeout=True
+            )
+            # Create Redis client with the connection pool
+            self.redis = redis.Redis(connection_pool=self.pool)
+            # Test the connection
             self.redis.ping()
             logger.info("Successfully connected to Redis")
+        except redis.ConnectionError as e:
+            logger.error(f"Redis connection error: {e}")
+            raise
+        except redis.TimeoutError as e:
+            logger.error(f"Redis timeout error: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
+            logger.error(f"Unexpected Redis error: {e}")
             raise
     
     async def enqueue(self, task: Dict[str, Any]) -> bool:
