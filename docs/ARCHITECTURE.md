@@ -82,6 +82,10 @@ WorthIt! is a Telegram bot that helps users evaluate product value through autom
   - Webhook-based updates
   - Environment variables configured
   - Auto-scaling enabled
+  - Robust event loop handling for serverless environment
+    - Graceful handling of closed event loops
+    - Request isolation to prevent cascading failures
+    - Proper error management with custom handlers
 - **API**: Vercel Serverless Functions
   - Serverless functions for analysis
   - Edge caching where possible

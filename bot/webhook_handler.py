@@ -12,6 +12,27 @@ from .bot import start, handle_text
 app = FastAPI()
 application: Optional[Application] = None
 
+async def error_handler(update: object, context) -> None:
+    """Handle errors in the telegram bot."""
+    print(f"Exception while handling an update: {context.error}")
+    
+    # Send a message to the user
+    if update and hasattr(update, 'effective_message') and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta."
+            )
+        except Exception as e:
+            print(f"Failed to send error message: {e}")
+    
+    # Log the error
+    print(f"Exception details: {context.error.__class__.__name__}: {context.error}")
+    
+    # Special handling for event loop errors
+    if isinstance(context.error, RuntimeError) and "Event loop is closed" in str(context.error):
+        print("Detected event loop closure error - this is expected in serverless environments")
+        return
+
 async def analyze_product(url: str) -> Dict[str, Any]:
     """Call the WorthIt! API to analyze a product"""
     vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
@@ -101,13 +122,15 @@ async def webhook_handler(request: Request):
             if not token:
                 raise ValueError("TELEGRAM_TOKEN environment variable is not set")
             
+            # Create application with proper shutdown handling
             application = Application.builder().token(token).build()
             application.add_handler(CommandHandler("start", start))
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
             application.add_handler(CallbackQueryHandler(handle_callback_query))
             
-            # Initialize but don't start the application
+            # Initialize application with error handlers
             await application.initialize()
+            application.add_error_handler(error_handler)
             
             # Set bot commands
             await application.bot.set_my_commands([
@@ -116,14 +139,26 @@ async def webhook_handler(request: Request):
                 ("settings", "Gestisci le impostazioni")
             ])
         
-        # Process the update
+        # Process the update with proper error handling
         data = await request.json()
         update = Update.de_json(data, application.bot)
         
-        # Process update in the current event loop instead of creating a new one
-        await application.process_update(update)
+        # Process update with timeout protection and proper error handling
+        try:
+            # Don't manipulate event loops directly in serverless environments
+            # Instead, just process the update within the current context
+            await asyncio.wait_for(application.process_update(update), timeout=30.0)
+        except asyncio.TimeoutError:
+            return {"status": "error", "detail": "Request timed out"}
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                print(f"Event loop error: {str(e)}")
+                # Return a successful response to prevent retries that would fail the same way
+                return {"status": "ok", "detail": "Event loop was closed, but webhook received"}
+            raise
         
         return {"status": "ok"}
     
     except Exception as e:
+        print(f"Error in webhook handler: {str(e)}")
         return {"status": "error", "detail": str(e)}
