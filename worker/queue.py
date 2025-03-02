@@ -2,12 +2,27 @@ import redis
 import json
 import os
 import asyncio
+import logging
 from typing import Dict, Any
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+logger = logging.getLogger(__name__)
 
 class TaskQueue:
     def __init__(self):
-        self.redis = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'))
+        self.redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
         self.queue_name = 'worthit_tasks'
+        self.connect_with_retry()
+    
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def connect_with_retry(self):
+        try:
+            self.redis = redis.from_url(self.redis_url)
+            self.redis.ping()
+            logger.info("Successfully connected to Redis")
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis: {e}")
+            raise
     
     async def enqueue(self, task: Dict[str, Any]) -> bool:
         """Add a task to the queue"""

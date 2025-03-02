@@ -1,9 +1,11 @@
 import asyncio
 import os
 import logging
+import time
 from telegram import Bot
 from dotenv import load_dotenv
 from typing import Dict, Any
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Import the queue interface
 from worker.queue import get_task_queue
@@ -23,16 +25,27 @@ async def process_task(task: Dict[str, Any], bot: Bot) -> None:
     try:
         logger.info(f"Processing task: {task['task_type']}")
         
-        if task['task_type'] == 'product_analysis':
+        if task['task_type'] == 'telegram_update':
+            # Process Telegram update from webhook
+            from bot.webhook_handler import process_telegram_update
+            
+            # Reconstruct the Update object
+            update = Update.de_json(task['update_data'], bot)
+            
+            # Process the update
+            await process_telegram_update(update)
+            
+        elif task['task_type'] == 'product_analysis':
             # Import here to avoid circular imports
             from api.main import analyze_product
             from api.scraper import ProductScraper
             from api.ml_processor import MLProcessor
             
-            # Send processing message
+            # Send processing message with stages
             await bot.send_message(
                 chat_id=task['chat_id'],
-                text="🔍 Analisi in corso... Questo potrebbe richiedere alcuni secondi."
+                text="🔍 *Analisi in corso...*\n\n1️⃣ Raccolta dati del prodotto\n2️⃣ Analisi delle recensioni\n3️⃣ Valutazione del rapporto qualità/prezzo",
+                parse_mode='Markdown'
             )
             
             # Initialize processors
@@ -41,46 +54,56 @@ async def process_task(task: Dict[str, Any], bot: Bot) -> None:
             
             try:
                 # Step 1: Scrape product data
+                await bot.send_message(
+                    chat_id=task['chat_id'],
+                    text="⏳ Raccolta informazioni sul prodotto..."
+                )
                 product_data = await scraper.extract_product(task['url'])
                 
                 # Step 2: Process reviews with ML
+                await bot.send_message(
+                    chat_id=task['chat_id'],
+                    text="⏳ Analisi delle recensioni e del sentiment..."
+                )
                 reviews = [{'review': r} for r in product_data.get('reviews', [])]
                 sentiment_data = await ml_processor.analyze_sentiment(reviews)
                 pros_cons = await ml_processor.extract_pros_cons(reviews, product_data)
                 
-                # Step 3: Compile results
+                # Step 3: Calculate value score
+                await bot.send_message(
+                    chat_id=task['chat_id'],
+                    text="⏳ Calcolo del punteggio di valore..."
+                )
+                value_score = await ml_processor.calculate_value_score(product_data, sentiment_data)
+                
+                # Step 4: Compile results
                 result = {
-                    'summary': f"Product: {product_data['title']}\nPrice: {product_data['price']}\nSentiment: {sentiment_data['average_sentiment']}/5",
-                    'pros_cons': pros_cons
+                    'title': product_data['title'],
+                    'price': product_data['price'],
+                    'value_score': value_score,
+                    'recommendation': get_recommendation(value_score),
+                    'pros': pros_cons['pros'],
+                    'cons': pros_cons['cons'],
+                    'url': task['url']
                 }
                 
-                # Send the result back to the user
+                # Format the response with inline keyboard
+                from bot.webhook_handler import format_analysis_response
+                message, keyboard = await format_analysis_response(result)
+                
+                # Send the final result back to the user
                 await bot.send_message(
                     chat_id=task['chat_id'],
-                    text=f"✅ *Analisi completata*\n\n{result['summary']}",
-                    parse_mode='Markdown'
-                )
-                
-                # Send detailed analysis
-                pros_cons_text = "*Pros:*\n"
-                for pro in result['pros_cons']['pros']:
-                    pros_cons_text += f"✓ {pro}\n"
-                
-                pros_cons_text += "\n*Cons:*\n"
-                for con in result['pros_cons']['cons']:
-                    pros_cons_text += f"✗ {con}\n"
-                
-                await bot.send_message(
-                    chat_id=task['chat_id'],
-                    text=pros_cons_text,
-                    parse_mode='Markdown'
+                    text=message,
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
                 )
                 
             except Exception as analysis_error:
                 logger.error(f"Analysis error: {analysis_error}")
                 await bot.send_message(
                     chat_id=task['chat_id'],
-                    text="Mi dispiace, si è verificato un errore durante l'analisi del prodotto."
+                    text="❌ Mi dispiace, si è verificato un errore durante l'analisi del prodotto.\n\nDettaglio: " + str(analysis_error)
                 )
         
         elif task['task_type'] == 'product_search':
@@ -146,15 +169,28 @@ async def process_task(task: Dict[str, Any], bot: Bot) -> None:
             )
             
     except Exception as e:
-        logger.error(f"Error processing task: {e}", exc_info=True)
-        # Notify user of error
-        try:
-            await bot.send_message(
-                chat_id=task['chat_id'],
-                text="Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
-            )
-        except Exception as send_error:
-            logger.error(f"Failed to send error message: {send_error}")
+        logger.error(f"Error processing task: {e}")
+        # Try to notify the user if we have a chat_id
+        if 'chat_id' in task:
+            try:
+                await bot.send_message(
+                    chat_id=task['chat_id'],
+                    text="❌ Si è verificato un errore durante l'elaborazione della richiesta."
+                )
+            except Exception as notify_error:
+                logger.error(f"Failed to notify user of error: {notify_error}")
+
+# Helper function for recommendation text
+def get_recommendation(value_score: float) -> str:
+    """Get recommendation text based on value score"""
+    if value_score >= 8.0:
+        return "Ottimo acquisto! Questo prodotto offre un eccellente rapporto qualità/prezzo."
+    elif value_score >= 6.0:
+        return "Buon acquisto. Il prodotto vale il suo prezzo."
+    elif value_score >= 4.0:
+        return "Acquisto nella media. Valuta se ci sono alternative migliori."
+    else:
+        return "Non consigliato. Il prodotto non vale il prezzo richiesto."
 
 async def main() -> None:
     """Main worker loop that processes tasks from the queue"""

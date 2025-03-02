@@ -38,14 +38,42 @@ async def error_handler(update: object, context) -> None:
 
 # HTTP client functions are now imported from http_client.py
 
-async def analyze_product(url: str) -> Dict[str, Any]:
+async def analyze_product(url: str, chat_id: int = None) -> Dict[str, Any]:
     """Call the WorthIt! API to analyze a product"""
     vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
     api_host = os.getenv("API_HOST", f"https://{vercel_url}")
     api_url = f"{api_host}/analyze"
     
     try:
-        client = get_http_client()
+        # Enqueue the task for background processing
+        from worker.queue import get_task_queue
+        
+        task = {
+            'task_type': 'product_analysis',
+            'url': url,
+            'status': 'pending',
+            'chat_id': chat_id
+        }
+        
+        # Add task to Redis queue
+        queue = get_task_queue()
+        await queue.enqueue(task)
+        
+        # Return initial response
+        return {
+            'status': 'processing',
+            'message': 'Analisi in corso... 🔄\n\nSto esaminando il prodotto e le recensioni.\nRiceverai presto i risultati dettagliati.'
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to enqueue task: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start analysis: {str(e)}"
+        )
+
+    client = get_http_client()
+    try:
         try:
             response = await asyncio.wait_for(
                 client.post(api_url, params={"url": url}),
@@ -250,7 +278,7 @@ async def root():
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
-    """Handle incoming updates from Telegram using a stateless approach"""
+    """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
     try:
         # Get the bot instance (singleton)
         bot = get_bot_instance()
@@ -259,39 +287,30 @@ async def webhook_handler(request: Request):
         data = await request.json()
         update = Update.de_json(data, bot)
         
-        # Process the update with proper connection management
-        try:
-            # Use a shorter timeout for the initial response
-            async with asyncio.timeout(1.5):  # Reduced from 2.0 seconds
-                try:
-                    await process_telegram_update(update)
-                except RuntimeError as re:
-                    if "Event loop is closed" in str(re):
-                        # Log and continue - this is expected in serverless
-                        print("Detected event loop closure - continuing in background")
-                        # Schedule the task without waiting
-                        asyncio.create_task(process_telegram_update(update))
-                    else:
-                        raise
-                finally:
-                    # Ensure we close the client after use
-                    await close_http_client()
-        except asyncio.TimeoutError:
-            print("Initial response timed out, continuing in background")
-            # Schedule background processing without blocking
-            asyncio.create_task(process_telegram_update(update))
-            return {"status": "ok", "detail": "Processing in background"}
-        except Exception as e:
-            print(f"Error processing update: {str(e)}")
-            # Close the client on error
-            await close_http_client()
-            # Don't raise the error, just log it and return success
-            return {"status": "ok", "detail": "Error handled gracefully"}
+        # Enqueue the task for background processing
+        from worker.queue import enqueue_task
+        task = {
+            'task_type': 'telegram_update',
+            'update_data': data,
+            'chat_id': update.effective_chat.id if update.effective_chat else None
+        }
         
-        return {"status": "ok"}
+        # Enqueue the task without waiting for processing
+        await enqueue_task(task)
+        
+        # Send immediate acknowledgment
+        if update.message and update.message.text and not update.message.text.startswith("/start"):
+            try:
+                await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+            except Exception as e:
+                print(f"Error sending acknowledgment: {e}")
+        
+        return {"status": "ok", "detail": "Task enqueued for processing"}
     
     except Exception as e:
         print(f"Error in webhook handler: {str(e)}")
+        # Always return success to Telegram
+        return {"status": "ok", "detail": str(e)}
         # Ensure client is closed on outer exceptions
         await close_http_client()
         # Always return success to Telegram
