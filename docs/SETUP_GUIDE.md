@@ -6,6 +6,7 @@
 - A Telegram Bot Token
 - APIFY Token for web scraping
 - Hugging Face Token for ML features
+- Redis Cloud account for background task processing
 
 ## Environment Setup
 1. Clone the repository
@@ -20,6 +21,12 @@ WEBHOOK_URL=your_webhook_url
 # API Tokens
 APIFY_TOKEN=your_apify_token
 HF_TOKEN=your_huggingface_token
+
+# Redis Cloud Configuration
+REDIS_URL=redis://default:A13fhd8gzadebwqq9cqaxkhrx7cxlhehhfjdct3ep62mgjqpfi2@redis-18843.c1.us-east1-2.gce.cloud.redislabs.com:18843
+
+# Render.com API Configuration
+RENDER_API_KEY=rnd_oW3VZXHpUJPzn6KLrzmgw9BJvyTt
 
 # Deployment
 VERCEL_URL=your_vercel_url
@@ -53,6 +60,14 @@ npm install
 ```bash
 python scripts/activate_webhook.py
 ```
+
+### Redis Cloud Setup
+1. The Redis Cloud connection is already configured with the provided URL in your .env file
+2. To start the background worker for processing tasks:
+```bash
+python -m worker.worker
+```
+3. The worker will connect to Redis Cloud and process tasks asynchronously
 
 ### Vercel Deployment
 1. Install Vercel CLI:

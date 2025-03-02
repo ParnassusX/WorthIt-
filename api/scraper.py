@@ -147,6 +147,74 @@ async def get_product_data(url: str) -> Dict[str, Any]:
     # Now supports multiple e-commerce platforms
     return await scraper.extract_product(url)
 
+    async def search_products(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Search for products across supported e-commerce platforms using Apify"""
+        try:
+            # Run the Product Search actor with custom page function
+            run_input = {
+                "search": query,
+                "maxResults": max_results,
+                "pageFunction": """
+                async function pageFunction(context) {
+                    const { $, request, log } = context;
+                    
+                    // Extract search results
+                    const products = [];
+                    
+                    // Amazon-specific selectors
+                    const amazonSelectors = {
+                        container: '[data-component-type="s-search-result"]',
+                        title: 'h2 a.a-link-normal',
+                        price: '.a-price .a-offscreen',
+                        url: 'h2 a.a-link-normal'
+                    };
+                    
+                    // Extract data using selectors
+                    $(amazonSelectors.container).each((i, el) => {
+                        const $el = $(el);
+                        const title = $el.find(amazonSelectors.title).text().trim();
+                        const price = $el.find(amazonSelectors.price).first().text().trim();
+                        const url = 'https://www.amazon.com' + $el.find(amazonSelectors.url).attr('href');
+                        
+                        if (title && url) {
+                            products.push({
+                                title,
+                                price: price || 'Price not available',
+                                url
+                            });
+                        }
+                    });
+                    
+                    return products;
+                }
+                """,
+                "startUrls": [{
+                    "url": f"https://www.amazon.com/s?k={query}"
+                }],
+                "proxyConfiguration": {"useApifyProxy": true}
+            }
+            
+            # Start the actor and wait for it to finish
+            run = self.apify_client.actor("apify/web-scraper").call(run_input=run_input)
+            
+            # Fetch the actor's output
+            items = self.apify_client.dataset(run["defaultDatasetId"]).list_items().items
+            
+            # Flatten and format the results
+            results = []
+            for item in items:
+                if isinstance(item, list):
+                    results.extend(item)
+                else:
+                    results.append(item)
+            
+            # Return the first max_results items
+            return results[:max_results]
+            
+        except Exception as e:
+            print(f"Error searching products: {str(e)}")
+            return []
+
 # Function to get product reviews
 async def get_product_reviews(url: str, max_reviews: int = 20) -> List[Dict[str, Any]]:
     """Get product reviews from a URL"""

@@ -11,3 +11,4 @@ apify-client
 pydantic
 python-multipart
 h2  # HTTP/2 support for httpx
+redis>=5.0.0  # Redis Cloud support
