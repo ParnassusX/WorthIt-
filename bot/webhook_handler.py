@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException, Depends
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 import httpx
 import os
 import re
@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 from .bot import start, handle_text
 
 app = FastAPI()
-application: Optional[Application] = None
+# We'll use a more stateless approach instead of a global application instance
+_bot_instance: Optional[Bot] = None
 
 async def error_handler(update: object, context) -> None:
     """Handle errors in the telegram bot."""
@@ -110,52 +111,50 @@ async def handle_callback_query(update: Update, context: Any):
             parse_mode="Markdown"
         )
 
+def get_bot_instance() -> Bot:
+    """Get or create a Bot instance (singleton pattern)"""
+    global _bot_instance
+    if _bot_instance is None:
+        load_dotenv()
+        token = os.getenv("TELEGRAM_TOKEN")
+        if not token:
+            raise ValueError("TELEGRAM_TOKEN environment variable is not set")
+        _bot_instance = Bot(token)
+    return _bot_instance
+
+async def process_telegram_update(update: Update) -> None:
+    """Process a Telegram update without using Application instance"""
+    # Handle different types of updates directly
+    if update.message:
+        if update.message.text:
+            if update.message.text.startswith("/start"):
+                await start(update, None)
+            else:
+                await handle_text(update, None)
+    elif update.callback_query:
+        await handle_callback_query(update, None)
+
 @app.post("/webhook")
 async def webhook_handler(request: Request):
-    """Handle incoming updates from Telegram"""
-    global application
-    
+    """Handle incoming updates from Telegram using a stateless approach"""
     try:
-        if not application:
-            load_dotenv()
-            token = os.getenv("TELEGRAM_TOKEN")
-            if not token:
-                raise ValueError("TELEGRAM_TOKEN environment variable is not set")
-            
-            # Create application with proper shutdown handling
-            application = Application.builder().token(token).build()
-            application.add_handler(CommandHandler("start", start))
-            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-            application.add_handler(CallbackQueryHandler(handle_callback_query))
-            
-            # Initialize application with error handlers
-            await application.initialize()
-            application.add_error_handler(error_handler)
-            
-            # Set bot commands
-            await application.bot.set_my_commands([
-                ("start", "Avvia il bot e mostra il menu principale"),
-                ("help", "Mostra guida all'utilizzo"),
-                ("settings", "Gestisci le impostazioni")
-            ])
+        # Get the bot instance (singleton)
+        bot = get_bot_instance()
         
-        # Process the update with proper error handling
+        # Parse the update
         data = await request.json()
-        update = Update.de_json(data, application.bot)
+        update = Update.de_json(data, bot)
         
-        # Process update with timeout protection and proper error handling
+        # Process update with timeout protection
         try:
-            # Don't manipulate event loops directly in serverless environments
-            # Instead, just process the update within the current context
-            await asyncio.wait_for(application.process_update(update), timeout=30.0)
+            # Process the update directly without Application instance
+            await asyncio.wait_for(process_telegram_update(update), timeout=30.0)
         except asyncio.TimeoutError:
             return {"status": "error", "detail": "Request timed out"}
         except RuntimeError as e:
-            if "Event loop is closed" in str(e):
-                print(f"Event loop error: {str(e)}")
-                # Return a successful response to prevent retries that would fail the same way
-                return {"status": "ok", "detail": "Event loop was closed, but webhook received"}
-            raise
+            print(f"Event loop error: {str(e)}")
+            # Return a successful response to prevent retries
+            return {"status": "ok", "detail": "Event loop error handled"}
         
         return {"status": "ok"}
     

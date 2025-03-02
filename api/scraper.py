@@ -19,24 +19,59 @@ class ProductScraper:
     def __init__(self):
         self.apify_client = apify_client
     
-    async def extract_amazon_product(self, url: str) -> Dict[str, Any]:
-        """Extract product data from Amazon using Apify"""
+    async def extract_product(self, url: str) -> Dict[str, Any]:
+        """Extract product data from any supported e-commerce site using Apify Web Scraper"""
         try:
-            # Validate URL (basic check)
-            if not url.startswith("https://www.amazon."):
-                raise ValueError("URL is not a valid Amazon product URL")
-            
-            # Run the Amazon Product Scraper actor
+            # Run the Web Scraper actor with custom page function
             run_input = {
                 "startUrls": [{"url": url}],
-                "maxRequestRetries": 3,
-                "maxConcurrency": 1,
-                "extendOutputFunction": "",
+                "pageFunction": """
+                async function pageFunction(context) {
+                    const { $, request } = context;
+                    
+                    // Common selectors for major e-commerce sites
+                    const selectors = {
+                        amazon: {
+                            title: '#productTitle, #title',
+                            price: '.a-price .a-offscreen, #price_inside_buybox, #priceblock_ourprice',
+                            description: '#feature-bullets, #productDescription, #productDetails',
+                            reviews: '.review-text, .review-text-content, [data-hook="review-body"]'
+                        },
+                        ebay: {
+                            title: '.x-item-title__mainTitle',
+                            price: '.x-price-primary',
+                            description: '.x-about-this-item',
+                            reviews: '.ebay-review-section .review-item-content'
+                        },
+                        default: {
+                            title: 'h1',
+                            price: '[data-price], .price, .product-price',
+                            description: '[data-description], .description, .product-description',
+                            reviews: '.review, .product-review, .customer-review'
+                        }
+                    };
+                    
+                    // Determine site type from URL
+                    let site = 'default';
+                    if (request.url.includes('amazon')) site = 'amazon';
+                    if (request.url.includes('ebay')) site = 'ebay';
+                    
+                    const selector = selectors[site];
+                    
+                    return {
+                        title: $(selector.title).first().text().trim(),
+                        price: $(selector.price).first().text().trim(),
+                        description: $(selector.description).text().trim(),
+                        reviews: $(selector.reviews).map((i, el) => $(el).text().trim()).get(),
+                        url: request.url
+                    };
+                }
+                """,
                 "proxyConfiguration": {"useApifyProxy": True}
             }
             
             # Start the actor and wait for it to finish
-            run = self.apify_client.actor("apify/amazon-product-scraper").call(run_input=run_input)
+            run = self.apify_client.actor("apify/web-scraper").call(run_input=run_input)
             
             # Fetch the actor's output
             items = self.apify_client.dataset(run["defaultDatasetId"]).list_items().items
@@ -51,19 +86,14 @@ class ProductScraper:
             return {
                 "title": product_data.get("title", "Unknown Product"),
                 "price": product_data.get("price", "Price not available"),
-                "currency": product_data.get("currency", "EUR"),  # Default to EUR
-                "images": product_data.get("images", []),
                 "description": product_data.get("description", ""),
-                "rating": product_data.get("rating", 0),
-                "review_count": product_data.get("reviewsCount", 0),
-                "url": url,
-                "features": product_data.get("features", []),
-                "availability": product_data.get("availability", "Unknown")
+                "reviews": product_data.get("reviews", []),
+                "url": url
             }
             
         except Exception as e:
             # Log the error and return a structured error response
-            print(f"Error extracting Amazon product: {str(e)}")
+            print(f"Error extracting product data: {str(e)}")
             return {
                 "error": True,
                 "message": f"Failed to extract product data: {str(e)}",
@@ -114,15 +144,8 @@ scraper = ProductScraper()
 # Function to get product data (convenience function)
 async def get_product_data(url: str) -> Dict[str, Any]:
     """Get product data from a URL"""
-    # Currently only supports Amazon
-    if "amazon" in url.lower():
-        return await scraper.extract_amazon_product(url)
-    else:
-        return {
-            "error": True,
-            "message": "Unsupported e-commerce platform",
-            "url": url
-        }
+    # Now supports multiple e-commerce platforms
+    return await scraper.extract_product(url)
 
 # Function to get product reviews
 async def get_product_reviews(url: str, max_reviews: int = 20) -> List[Dict[str, Any]]:
@@ -131,4 +154,7 @@ async def get_product_reviews(url: str, max_reviews: int = 20) -> List[Dict[str,
     if "amazon" in url.lower():
         return await scraper.extract_reviews(url, max_reviews)
     else:
-        return []
+        # For other sites, we extract reviews from the product data
+        product_data = await scraper.extract_product(url)
+        reviews = product_data.get("reviews", [])
+        return [{"review": review, "rating": 0, "title": "", "date": "", "verified": False} for review in reviews]
