@@ -4,7 +4,9 @@ from typing import Dict, Any
 import httpx
 import os
 import re
+import asyncio
 from api.security import validate_url
+from .webhook_handler import get_http_client, close_http_client
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -68,16 +70,16 @@ async def analyze_product_url(update: Update, url: str):
         api_url = f"{api_host}/analyze"
         
         try:
-            # Use a shorter timeout for the API call to avoid blocking the webhook
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(api_url, params={"url": url})
-                if response.status_code != 200:
-                    error_detail = await response.text()
-                    if response.status_code == 401:
-                        raise Exception(f"API authentication error: Please check that APIFY_TOKEN and HF_TOKEN are correctly set in environment variables.")
-                    else:
-                        raise Exception(f"API error: {response.status_code} - {error_detail}")
-                data = response.json()
+            # Use the shared HTTP client with optimized connection pooling
+            client = get_http_client()
+            response = await client.post(api_url, params={"url": url}, timeout=30.0)
+            if response.status_code != 200:
+                error_detail = await response.text()
+                if response.status_code == 401:
+                    raise Exception(f"API authentication error: Please check that APIFY_TOKEN and HF_TOKEN are correctly set in environment variables.")
+                else:
+                    raise Exception(f"API error: {response.status_code} - {error_detail}")
+            data = response.json()
             
             # Format the response with inline keyboard
             value_emoji = "🟢" if data["value_score"] >= 7 else "🟡" if data["value_score"] >= 5 else "🔴"
@@ -107,8 +109,11 @@ async def analyze_product_url(update: Update, url: str):
         except asyncio.TimeoutError:
             # Handle timeout specifically
             await update.message.reply_text(
-                "L'analisi sta richiedendo più tempo del previsto. Riceverai i risultati appena disponibili."
+                "L'analisi sta richiedendo più tempo del previsto. Riprova più tardi."
             )
+        finally:
+            # Ensure we close the client after use
+            await close_http_client()
         
     except Exception as e:
         error_message = "Mi dispiace, non sono riuscito ad analizzare questo prodotto. "

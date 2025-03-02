@@ -43,8 +43,12 @@ def get_http_client():
     global _http_client
     if _http_client is None:
         _http_client = httpx.AsyncClient(
-            timeout=30.0,
-            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+            timeout=10.0,  # Reduced timeout
+            limits=httpx.Limits(
+                max_keepalive_connections=5,  # Reduced from 20
+                max_connections=10,  # Reduced from 50
+                keepalive_expiry=5.0  # Added expiry time
+            ),
             http2=False
         )
     return _http_client
@@ -280,9 +284,7 @@ async def webhook_handler(request: Request):
         # Process the update with proper connection management
         try:
             # Use a shorter timeout for the initial response
-            async with asyncio.timeout(2.0):  # Reduced from 3.0 to 2.0 seconds
-                # Get a fresh client for this request
-                client = get_http_client()
+            async with asyncio.timeout(1.5):  # Reduced from 2.0 seconds
                 try:
                     await process_telegram_update(update)
                 except RuntimeError as re:
