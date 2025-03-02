@@ -43,9 +43,17 @@ def get_http_client():
     if _http_client is None:
         _http_client = httpx.AsyncClient(
             timeout=30.0,
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+            http2=True
         )
     return _http_client
+
+async def close_http_client():
+    """Close the shared httpx client to free resources"""
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
 
 async def analyze_product(url: str) -> Dict[str, Any]:
     """Call the WorthIt! API to analyze a product"""
@@ -136,13 +144,23 @@ def get_bot_instance() -> Bot:
 
 async def process_telegram_update(update: Update) -> None:
     """Process a Telegram update without using Application instance"""
+    # Create a new client for each update processing to avoid connection pool issues
+    client = None
     try:
+        client = get_http_client()
+        
         # Send an immediate acknowledgment for long-running operations
         if update.message and update.message.text and not update.message.text.startswith("/start"):
             # Check if it might be a product URL
             if "amazon" in update.message.text.lower() or "ebay" in update.message.text.lower():
                 try:
-                    await update.message.reply_text("Ho ricevuto il tuo link! Sto iniziando l'analisi in background... 🔄")
+                    # Use a short timeout for acknowledgment
+                    await asyncio.wait_for(
+                        update.message.reply_text("Ho ricevuto il tuo link! Sto iniziando l'analisi in background... 🔄"),
+                        timeout=2.0
+                    )
+                except asyncio.TimeoutError:
+                    print("Acknowledgment timed out, but continuing processing")
                 except Exception as ack_error:
                     print(f"Failed to send acknowledgment: {ack_error}")
                 
@@ -162,8 +180,12 @@ async def process_telegram_update(update: Update) -> None:
                 except Exception as msg_error:
                     print(f"Error handling message: {msg_error}")
                     try:
-                        await update.message.reply_text(
-                            "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
+                        # Use a short timeout for error messages
+                        await asyncio.wait_for(
+                            update.message.reply_text(
+                                "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
+                            ),
+                            timeout=2.0
                         )
                     except Exception:
                         pass
@@ -181,11 +203,19 @@ async def process_telegram_update(update: Update) -> None:
         print(f"Error in process_telegram_update: {str(e)}")
         if update.message:
             try:
-                await update.message.reply_text(
-                    "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
+                # Use a short timeout for error messages
+                await asyncio.wait_for(
+                    update.message.reply_text(
+                        "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
+                    ),
+                    timeout=2.0
                 )
             except Exception:
                 pass
+    finally:
+        # Always ensure we close the client to prevent connection pool exhaustion
+        if client is not None:
+            await close_http_client()
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
@@ -198,23 +228,32 @@ async def webhook_handler(request: Request):
         data = await request.json()
         update = Update.de_json(data, bot)
         
-        # Process the update directly without manipulating event loops
-        # This is safer in serverless environments
+        # Process the update with proper connection management
         try:
-            # Use a shorter timeout for the initial response to stay within Vercel limits
-            # but don't create or manipulate event loops
-            await asyncio.wait_for(process_telegram_update(update), timeout=5.0)
+            # Use a shorter timeout for the initial response
+            async with asyncio.timeout(3.0):
+                # Get a fresh client for this request
+                client = get_http_client()
+                try:
+                    await process_telegram_update(update)
+                finally:
+                    # Ensure we close the client after use
+                    await close_http_client()
         except asyncio.TimeoutError:
-            print("Initial response timed out, but processing continues in background")
-            # Return success anyway since we've already sent an acknowledgment
+            print("Initial response timed out, continuing in background")
+            # Schedule background processing without blocking
+            asyncio.create_task(process_telegram_update(update))
             return {"status": "ok", "detail": "Processing in background"}
         except Exception as e:
             print(f"Error processing update: {str(e)}")
-            # Still return success to Telegram to prevent retries
+            # Close the client on error
+            await close_http_client()
             return {"status": "ok", "detail": "Error handled gracefully"}
         
         return {"status": "ok"}
     
     except Exception as e:
         print(f"Error in webhook handler: {str(e)}")
+        # Ensure client is closed on outer exceptions
+        await close_http_client()
         return {"status": "error", "detail": str(e)}
