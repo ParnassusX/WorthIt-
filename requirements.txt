@@ -10,3 +10,4 @@ starlette
 apify-client
 pydantic
 python-multipart
+h2  # HTTP/2 support for httpx
