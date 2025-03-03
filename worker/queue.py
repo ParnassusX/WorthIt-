@@ -22,17 +22,23 @@ async def get_redis_client():
             redis_url = redis_url.replace("redis://", "rediss://")
         
         try:
-            # Set SSL to True for Upstash connections
+            # Set SSL configuration for Upstash Redis
             ssl_enabled = "upstash" in redis_url
+            ssl_config = {
+                "ssl": ssl_enabled,
+                "ssl_cert_reqs": None,  # Don't verify SSL certificate
+                "ssl_check_hostname": False  # Don't verify hostname
+            } if ssl_enabled else {}
+            
             _redis_client = await Redis.from_url(
                 redis_url,
                 decode_responses=False,
-                ssl=ssl_enabled,
                 socket_timeout=5.0,
                 socket_connect_timeout=5.0,
                 socket_keepalive=True,
                 health_check_interval=60,
-                retry_on_timeout=True
+                retry_on_timeout=True,
+                **ssl_config
             )
             # Test the connection
             await _redis_client.ping()
@@ -59,17 +65,23 @@ class TaskQueue:
                 if "upstash" in self.redis_url and not self.redis_url.startswith("rediss://"):
                     self.redis_url = self.redis_url.replace("redis://", "rediss://")
                 
-                # Set SSL to True for Upstash connections
+                # Set SSL configuration for Upstash Redis
                 ssl_enabled = "upstash" in self.redis_url
+                ssl_config = {
+                    "ssl": ssl_enabled,
+                    "ssl_cert_reqs": None,  # Don't verify SSL certificate
+                    "ssl_check_hostname": False  # Don't verify hostname
+                } if ssl_enabled else {}
+                
                 self.redis = await Redis.from_url(
                     self.redis_url,
                     decode_responses=False,
-                    ssl=ssl_enabled,
                     socket_timeout=5.0,
                     socket_connect_timeout=5.0,
                     socket_keepalive=True,
                     health_check_interval=60,
-                    retry_on_timeout=True
+                    retry_on_timeout=True,
+                    **ssl_config
                 )
                 # Test the connection
                 await self.redis.ping()
