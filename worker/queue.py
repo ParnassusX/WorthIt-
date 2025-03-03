@@ -25,9 +25,11 @@ async def get_redis_client():
             # Set SSL configuration for Upstash Redis
             ssl_enabled = "upstash" in redis_url
             ssl_config = {
-                "ssl": ssl_enabled,
+                "ssl": True,
                 "ssl_cert_reqs": None,  # Don't verify SSL certificate
-                "ssl_check_hostname": False  # Don't verify hostname
+                "ssl_check_hostname": False,  # Don't verify hostname
+                "retry_on_timeout": True,
+                "max_connections": 10
             } if ssl_enabled else {}
             
             _redis_client = await Redis.from_url(
@@ -68,9 +70,11 @@ class TaskQueue:
                 # Set SSL configuration for Upstash Redis
                 ssl_enabled = "upstash" in self.redis_url
                 ssl_config = {
-                    "ssl": ssl_enabled,
+                    "ssl": True,
                     "ssl_cert_reqs": None,  # Don't verify SSL certificate
-                    "ssl_check_hostname": False  # Don't verify hostname
+                    "ssl_check_hostname": False,  # Don't verify hostname
+                    "retry_on_timeout": True,
+                    "max_connections": 10
                 } if ssl_enabled else {}
                 
                 self.redis = await Redis.from_url(
