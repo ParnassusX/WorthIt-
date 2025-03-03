@@ -6,6 +6,7 @@ import logging
 from api.errors import register_exception_handlers
 from api.health import router as health_router
 from api.ml_processor import analyze_reviews, extract_product_pros_cons, get_value_score
+from api.routes import router as api_router
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -32,6 +33,9 @@ app.include_router(health_router)
 from api.image_analyzer import router as image_router
 app.include_router(image_router, prefix="/api")
 
+# Include API routes for tests
+app.include_router(api_router)
+
 # Removed mock implementation of analyze_product endpoint
 # The actual implementation is defined below
 
@@ -41,19 +45,23 @@ TEXT_GENERATION_API_URL = "https://api-inference.huggingface.co/models/mistralai
 
 # Hugging Face API functions
 async def analyze_sentiment(text):
-    """Use Hugging Face API for sentiment analysis"""
+    """Use Hugging Face API for sentiment analysis with free tier handling"""
     hf_token = os.getenv("HF_TOKEN")
     if not hf_token:
         logger.warning("No Hugging Face token found. Using fallback sentiment analysis.")
-        # Simple fallback sentiment analysis
         return {"label": "3 stars", "score": 0.5}
     
     headers = {"Authorization": f"Bearer {hf_token}"}
-    payload = {"inputs": text}
+    payload = {"inputs": text[:500]}  # Limit input size for free tier
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(SENTIMENT_API_URL, headers=headers, json=payload, timeout=10.0)
+            response = await client.post(
+                SENTIMENT_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=5.0  # Shorter timeout for free tier
+            )
             response.raise_for_status()
             return response.json()[0]
     except Exception as e:
@@ -61,7 +69,7 @@ async def analyze_sentiment(text):
         return {"label": "3 stars", "score": 0.5}  # Fallback
 
 async def generate_pros_cons(prompt):
-    """Use Hugging Face API for text generation"""
+    """Use Hugging Face API for text generation with free tier handling"""
     hf_token = os.getenv("HF_TOKEN")
     if not hf_token:
         logger.warning("No Hugging Face token found. Using fallback pros/cons generation.")
@@ -69,13 +77,23 @@ async def generate_pros_cons(prompt):
     
     headers = {"Authorization": f"Bearer {hf_token}"}
     payload = {
-        "inputs": prompt,
-        "parameters": {"max_length": 500, "return_full_text": False}
+        "inputs": prompt[:1000],  # Limit input size for free tier
+        "parameters": {
+            "max_length": 300,  # Reduced length for free tier
+            "return_full_text": False,
+            "temperature": 0.7,  # More conservative setting
+            "max_new_tokens": 200  # Limit token generation
+        }
     }
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(TEXT_GENERATION_API_URL, headers=headers, json=payload, timeout=30.0)
+            response = await client.post(
+                TEXT_GENERATION_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=10.0  # Adjusted timeout for free tier
+            )
             response.raise_for_status()
             return {"generated_text": response.json()[0]["generated_text"]}
     except Exception as e:

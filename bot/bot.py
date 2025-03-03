@@ -8,6 +8,21 @@ import asyncio
 from api.security import validate_url
 from .http_client import get_http_client, close_http_client
 
+class WorthItBot:
+    def __init__(self, token: str):
+        self.token = token
+        self.app = ApplicationBuilder().token(token).build()
+        self.setup_handlers()
+    
+    def setup_handlers(self):
+        self.app.add_handler(CommandHandler('start', start))
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    
+    async def run(self):
+        await self.app.initialize()
+        await self.app.start()
+        await self.app.run_polling()
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [{
@@ -73,28 +88,29 @@ async def analyze_product_url(update: Update, url: str):
             # Use the shared HTTP client with optimized connection pooling
             client = get_http_client()
             response = await client.post(api_url, params={"url": url}, timeout=30.0)
+            response_data = await response.json()
+            
             if response.status_code != 200:
-                error_detail = await response.text()
+                error_detail = response_data.get('error', 'Unknown error')
                 if response.status_code == 401:
-                    raise Exception(f"API authentication error: Please check that APIFY_TOKEN and HF_TOKEN are correctly set in environment variables.")
+                    raise Exception("API authentication error: Please check that APIFY_TOKEN and HF_TOKEN are correctly set in environment variables.")
                 else:
                     raise Exception(f"API error: {response.status_code} - {error_detail}")
-            data = response.json()
             
             # Format the response with inline keyboard
-            value_emoji = "🟢" if data["value_score"] >= 7 else "🟡" if data["value_score"] >= 5 else "🔴"
+            value_emoji = "🟢" if response_data["value_score"] >= 7 else "🟡" if response_data["value_score"] >= 5 else "🔴"
             
-            message = f"*{data['title']}*\n\n"
-            message += f"💰 Prezzo: {data['price']}\n"
-            message += f"⭐ Valore: {value_emoji} {data['value_score']}/10\n\n"
-            message += f"*Raccomandazione:* {data['recommendation']}\n\n"
+            message = f"*{response_data['title']}*\n\n"
+            message += f"💰 Prezzo: {response_data['price']}\n"
+            message += f"⭐ Valore: {value_emoji} {response_data['value_score']}/10\n\n"
+            message += f"*Raccomandazione:* {response_data['recommendation']}\n\n"
             
             message += "*Punti di forza:*\n"
-            for pro in data['pros'][:3]:
+            for pro in response_data['pros'][:3]:
                 message += f"✅ {pro}\n"
             
             message += "\n*Punti deboli:*\n"
-            for con in data['cons'][:3]:
+            for con in response_data['cons'][:3]:
                 message += f"❌ {con}\n"
             
             # Create inline keyboard for actions
@@ -126,4 +142,4 @@ async def analyze_product_url(update: Update, url: str):
         await update.message.reply_text(error_message)
 
 # Export handlers for webhook_handler.py
-__all__ = ['start', 'handle_text']
+__all__ = ['start', 'handle_text', 'WorthItBot']

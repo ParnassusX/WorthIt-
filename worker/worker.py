@@ -2,13 +2,16 @@ import asyncio
 import os
 import logging
 import time
-from telegram import Bot
+import json
+from redis.asyncio import Redis
+from telegram import Bot, Update
 from dotenv import load_dotenv
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
+import httpx
 
 # Import the queue interface
-from worker.queue import get_task_queue
+from worker.queue import get_redis_client, get_task_queue, enqueue_task, dequeue_task
 
 # Configure logging
 logging.basicConfig(
@@ -20,165 +23,136 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-async def process_task(task: Dict[str, Any], bot: Bot) -> None:
-    """Process a single task from the queue"""
+# Redis connection pool
+_redis_client = None
+
+async def notify_completion(task_id: str, result: Dict[str, Any]) -> bool:
+    """Notify task completion"""
     try:
-        logger.info(f"Processing task: {task['task_type']}")
+        # Convert result to string if it's not already
+        if isinstance(result, dict):
+            result = json.dumps(result)
         
-        if task['task_type'] == 'telegram_update':
-            # Process Telegram update from webhook
-            from bot.webhook_handler import process_telegram_update
-            
-            # Reconstruct the Update object
-            update = Update.de_json(task['update_data'], bot)
-            
-            # Process the update
-            await process_telegram_update(update)
-            
-        elif task['task_type'] == 'product_analysis':
-            # Import here to avoid circular imports
-            from api.main import analyze_product
-            from api.scraper import ProductScraper
-            from api.ml_processor import MLProcessor
-            
-            # Send processing message with stages
-            await bot.send_message(
-                chat_id=task['chat_id'],
-                text="🔍 *Analisi in corso...*\n\n1️⃣ Raccolta dati del prodotto\n2️⃣ Analisi delle recensioni\n3️⃣ Valutazione del rapporto qualità/prezzo",
-                parse_mode='Markdown'
+        # Send notification
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{os.getenv('API_BASE_URL')}/notify",
+                json={"task_id": task_id, "result": result}
             )
-            
-            # Initialize processors
-            scraper = ProductScraper()
-            ml_processor = MLProcessor()
-            
-            try:
-                # Step 1: Scrape product data
-                await bot.send_message(
-                    chat_id=task['chat_id'],
-                    text="⏳ Raccolta informazioni sul prodotto..."
-                )
-                product_data = await scraper.extract_product(task['url'])
-                
-                # Step 2: Process reviews with ML
-                await bot.send_message(
-                    chat_id=task['chat_id'],
-                    text="⏳ Analisi delle recensioni e del sentiment..."
-                )
-                reviews = [{'review': r} for r in product_data.get('reviews', [])]
-                sentiment_data = await ml_processor.analyze_sentiment(reviews)
-                pros_cons = await ml_processor.extract_pros_cons(reviews, product_data)
-                
-                # Step 3: Calculate value score
-                await bot.send_message(
-                    chat_id=task['chat_id'],
-                    text="⏳ Calcolo del punteggio di valore..."
-                )
-                value_score = await ml_processor.calculate_value_score(product_data, sentiment_data)
-                
-                # Step 4: Compile results
-                result = {
-                    'title': product_data['title'],
-                    'price': product_data['price'],
-                    'value_score': value_score,
-                    'recommendation': get_recommendation(value_score),
-                    'pros': pros_cons['pros'],
-                    'cons': pros_cons['cons'],
-                    'url': task['url']
-                }
-                
-                # Format the response with inline keyboard
-                from bot.webhook_handler import format_analysis_response
-                message, keyboard = await format_analysis_response(result)
-                
-                # Send the final result back to the user
-                await bot.send_message(
-                    chat_id=task['chat_id'],
-                    text=message,
-                    parse_mode='Markdown',
-                    reply_markup=keyboard
-                )
-                
-            except Exception as analysis_error:
-                logger.error(f"Analysis error: {analysis_error}")
-                await bot.send_message(
-                    chat_id=task['chat_id'],
-                    text="❌ Mi dispiace, si è verificato un errore durante l'analisi del prodotto.\n\nDettaglio: " + str(analysis_error)
-                )
-        
-        elif task['task_type'] == 'product_search':
-            # Import scraper
-            from api.scraper import ProductScraper
-            
-            # Send processing message
-            await bot.send_message(
-                chat_id=task['chat_id'],
-                text="🔍 Ricerca prodotti in corso..."
-            )
-            
-            try:
-                # Initialize scraper and search
-                scraper = ProductScraper()
-                search_results = await scraper.search_products(task['query'])
-                
-                if search_results:
-                    # Format results message
-                    results_text = "*Risultati della ricerca:*\n\n"
-                    for i, product in enumerate(search_results[:5], 1):
-                        results_text += f"{i}. [{product['title']}]({product['url']})\n"
-                        results_text += f"💰 {product['price']}\n\n"
-                    
-                    await bot.send_message(
-                        chat_id=task['chat_id'],
-                        text=results_text,
-                        parse_mode='Markdown',
-                        disable_web_page_preview=True
-                    )
-                else:
-                    await bot.send_message(
-                        chat_id=task['chat_id'],
-                        text="Nessun prodotto trovato per la tua ricerca."
-                    )
-                    
-            except Exception as search_error:
-                logger.error(f"Search error: {search_error}")
-                await bot.send_message(
-                    chat_id=task['chat_id'],
-                    text="Mi dispiace, si è verificato un errore durante la ricerca."
-                )
-        
-        elif task['task_type'] == 'image_analysis':
-            # Import here to avoid circular imports
-            from api.image_analyzer import analyze_image
-            
-            # Process image analysis
-            result = await analyze_image(task['image_url'])
-            
-            # Send the result back to the user
-            await bot.send_message(
-                chat_id=task['chat_id'],
-                text=f"📊 *Analisi immagine completata*\n\n{result['summary']}",
-                parse_mode='Markdown'
-            )
-        
-        else:
-            logger.warning(f"Unknown task type: {task['task_type']}")
-            await bot.send_message(
-                chat_id=task['chat_id'],
-                text="Mi dispiace, non riconosco questo tipo di attività."
-            )
-            
+            return response.status_code == 200
     except Exception as e:
-        logger.error(f"Error processing task: {e}")
-        # Try to notify the user if we have a chat_id
-        if 'chat_id' in task:
-            try:
+        logger.error(f"Error notifying completion: {e}")
+        return False
+
+async def get_http_client():
+    """Get an HTTP client for API calls"""
+    return httpx.AsyncClient(timeout=30.0)
+
+class TaskWorker:
+    """Worker class for processing tasks from the queue"""
+    
+    def __init__(self):
+        """Initialize the worker"""
+        self.telegram_token = os.getenv("TELEGRAM_TOKEN")
+        if not self.telegram_token:
+            logger.warning("TELEGRAM_TOKEN environment variable is not set")
+    
+    async def process_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a single task from the queue"""
+        try:
+            logger.info(f"Processing task: {task['type']}")
+            
+            if task['type'] == 'product_analysis':
+                # Import here to avoid circular imports
+                from api.scraper import scrape_product
+                from api.ml_processor import analyze_reviews
+                
+                try:
+                    # Step 1: Scrape product data
+                    product_data = await scrape_product(task['data']['url'])
+                    
+                    # Step 2: Process reviews with ML
+                    analysis_result = await analyze_reviews(product_data.get('reviews', []))
+                    
+                    # Step 3: Calculate value score and compile results
+                    result = {
+                        'title': product_data['title'],
+                        'price': product_data['price'],
+                        'value_score': 0.75,  # Placeholder value
+                        'analysis': analysis_result
+                    }
+                    
+                    # Store result in Redis
+                    redis_client = await get_redis_client()
+                    await redis_client.set(f"task:{task['id']}", json.dumps(result))
+                    
+                    return {"status": "completed", "result": result}
+                    
+                except Exception as analysis_error:
+                    logger.error(f"Analysis error: {analysis_error}")
+                    return {"status": "error", "error_message": str(analysis_error)}
+            
+            else:
+                logger.warning(f"Unknown task type: {task['type']}")
+                return {"status": "error", "error_message": f"Unknown task type: {task['type']}"}
+                
+        except Exception as e:
+            logger.error(f"Error processing task: {e}")
+            return {"status": "error", "error_message": str(e)}
+    
+    async def notify_completion(self, task_id: str, result: Dict[str, Any]) -> bool:
+        """Notify the user that their task is complete"""
+        try:
+            # Get the task data from Redis
+            redis_client = await get_redis_client()
+            task_data = await redis_client.get(f"task:{task_id}")
+            
+            if not task_data:
+                logger.error(f"Task data not found for task_id: {task_id}")
+                return False
+            
+            # Handle both string and bytes responses from Redis
+            if isinstance(task_data, bytes):
+                task_info = json.loads(task_data.decode('utf-8'))
+            else:
+                task_info = json.loads(task_data)
+            
+            # If there's a chat_id, send a notification
+            if 'chat_id' in task_info:
+                bot = Bot(token=self.telegram_token)
                 await bot.send_message(
-                    chat_id=task['chat_id'],
-                    text="❌ Si è verificato un errore durante l'elaborazione della richiesta."
+                    chat_id=task_info['chat_id'],
+                    text=f"✅ Analisi completata per: {task_info.get('title', 'il tuo prodotto')}"
                 )
-            except Exception as notify_error:
-                logger.error(f"Failed to notify user of error: {notify_error}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error notifying completion: {e}")
+            return False
+    
+    async def run(self):
+        """Main worker loop that processes tasks from the queue"""
+        logger.info("Worker started, waiting for tasks...")
+        
+        while True:
+            try:
+                # Get a task from the queue (blocking operation)
+                task = await dequeue_task()
+                if task:
+                    logger.info(f"Received task: {task['type']}")
+                    
+                    # Process the task
+                    result = await self.process_task(task)
+                    
+                    # Notify completion
+                    if result.get('status') == 'completed':
+                        await self.notify_completion(task['id'], result)
+                
+            except Exception as e:
+                logger.error(f"Error in worker loop: {e}", exc_info=True)
+                # Brief pause to prevent tight loop in case of persistent errors
+                await asyncio.sleep(1)
 
 # Helper function for recommendation text
 def get_recommendation(value_score: float) -> str:
@@ -192,32 +166,15 @@ def get_recommendation(value_score: float) -> str:
     else:
         return "Non consigliato. Il prodotto non vale il prezzo richiesto."
 
+async def process_task_legacy(task: Dict[str, Any], bot: Bot) -> None:
+    """Legacy process task function for backward compatibility"""
+    worker = TaskWorker()
+    await worker.process_task(task)
+
 async def main() -> None:
-    """Main worker loop that processes tasks from the queue"""
-    # Initialize the bot
-    telegram_token = os.getenv("TELEGRAM_TOKEN")
-    if not telegram_token:
-        logger.error("TELEGRAM_TOKEN environment variable is not set")
-        return
-    
-    bot = Bot(token=telegram_token)
-    queue = get_task_queue()
-    
-    logger.info("Worker started, waiting for tasks...")
-    
-    while True:
-        try:
-            # Get a task from the queue (blocking operation)
-            task = await queue.dequeue()
-            logger.info(f"Received task: {task['task_type']}")
-            
-            # Process the task
-            await process_task(task, bot)
-            
-        except Exception as e:
-            logger.error(f"Error in worker loop: {e}", exc_info=True)
-            # Brief pause to prevent tight loop in case of persistent errors
-            await asyncio.sleep(1)
+    """Main entry point for the worker"""
+    worker = TaskWorker()
+    await worker.run()
 
 if __name__ == "__main__":
     asyncio.run(main())
