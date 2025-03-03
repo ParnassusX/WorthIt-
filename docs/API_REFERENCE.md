@@ -17,6 +17,9 @@ The API requires two authentication tokens:
 
 These should be set as environment variables on your deployment platform.
 
+### Testing Authentication
+For testing purposes, use the `.env.test` file with mock tokens. The test suite uses `TestClient` and `AsyncClient` from FastAPI's testing utilities to simulate authenticated requests.
+
 ## Endpoints
 
 ### Product Analysis

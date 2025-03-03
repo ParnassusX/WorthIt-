@@ -1,14 +1,18 @@
-# WorthIt! Testing Structure Proposal
+# WorthIt! Testing Structure
 
-## Current Structure Analysis
+## Current Testing Architecture
 
-After reviewing the project, I've identified that test-related code is currently distributed across multiple directories:
+The project follows a well-organized testing structure with a focus on async testing patterns and proper test isolation:
 
-1. **`/tests/`** - Contains formal test files like `test_api.py` that use pytest for unit testing
-2. **`/scripts/`** - Contains utility scripts that test services and functionality:
-   - `test_services_cli.py` - CLI tool for testing various services
-   - `redis_diagnostics.py` - Diagnostic tool for Redis connectivity
-3. **`/worker/`** - Contains implementation code with embedded testing logic
+1. **`/tests/`** - Main test directory following pytest conventions:
+   - `unit/` - Contains unit tests with async support
+     - `test_api.py` - FastAPI endpoint tests using TestClient and AsyncClient
+     - Other unit test modules
+   - `conftest.py` - Shared test fixtures and async client setup
+2. **`/scripts/`** - Contains utility scripts that support testing:
+   - `test_services_cli.py` - CLI tool for service testing
+   - `redis_diagnostics.py` - Redis connectivity testing
+3. **`/tools/`** - Diagnostic and testing tools
 
 This scattered approach makes it difficult to maintain a consistent testing strategy and can lead to confusion about where specific tests should be placed.
 

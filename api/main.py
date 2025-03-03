@@ -262,7 +262,7 @@ async def analyze_product(url: str):
             product_data = await scrape_product(url)
         except ValueError as e:
             logger.error(f"API authentication error: {e}")
-            raise HTTPException(status_code=401, detail=str(e))
+            raise HTTPException(status_code=401, detail={"detail": str(e)})
         except Exception as e:
             logger.error(f"Scraping error: {e}")
             raise HTTPException(status_code=503, detail="Unable to fetch product data")

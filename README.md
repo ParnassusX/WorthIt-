@@ -38,6 +38,23 @@ If you're seeing a 401 error when analyzing products, check that:
 
 If you encounter "Event loop is closed" errors, this has been fixed in the latest update. Make sure you're running the latest version of the code.
 
+## Testing
+
+### Running Tests
+
+1. Install test dependencies: `pip install -r requirements.txt`
+2. Create a `.env.test` file with mock tokens for testing
+3. Run tests with pytest: `pytest tests/`
+
+### Test Structure
+
+The project uses pytest with async support:
+
+- `tests/unit/` - Unit tests for API endpoints and components
+- `tests/conftest.py` - Shared fixtures including async client setup
+
+For more details, see the [Testing Structure](docs/TESTING_STRUCTURE.md) documentation.
+
 ## Deployment
 
 ### Local Development
