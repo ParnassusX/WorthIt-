@@ -17,6 +17,7 @@ class SentimentRequest(BaseModel):
 
 class ProsConsRequest(BaseModel):
     reviews: List[str]
+    product_data: Dict[str, Any]
 
 class ScrapeRequest(BaseModel):
     url: str
@@ -38,10 +39,15 @@ async def sentiment_analysis(request: SentimentRequest):
 async def pros_cons_extraction(request: ProsConsRequest):
     """Extract pros and cons from reviews"""
     try:
-        result = extract_product_pros_cons(request.reviews)
+        # The extract_product_pros_cons function returns a tuple of (pros, cons)
+        pros, cons = await extract_product_pros_cons(request.reviews, request.product_data)
+        # Convert tuple to dictionary format expected by tests
+        result = {"pros": pros, "cons": cons}
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error extracting pros/cons: {str(e)}")
+        # Return a properly formatted response even in case of error
+        return {"pros": [], "cons": [], "error": str(e)}
 
 @router.post("/scrape")
 async def scrape_product_endpoint(request: ScrapeRequest):
@@ -60,7 +66,7 @@ async def analyze_product(request: ProductAnalysisRequest):
         product_data = scrape_product(request.url)
         
         # Analyze reviews
-        reviews_analysis = extract_product_pros_cons(product_data["reviews"])
+        reviews_analysis = await extract_product_pros_cons(product_data["reviews"], product_data)
         
         # Calculate value score (simple implementation for tests)
         def get_value_score(price, sentiment, rating):

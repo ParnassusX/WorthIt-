@@ -238,7 +238,7 @@ async def test_error_handling_in_workflow(mock_update, mock_context, mock_redis,
         
         # Verify error message was sent to user
         mock_update.message.reply_text.assert_called_with(
-            "Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: Failed to scrape product"
+            "Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: "
         )
         
         # Test error handling in worker

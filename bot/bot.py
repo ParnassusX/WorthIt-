@@ -82,64 +82,23 @@ async def analyze_product_url(update: Update, url: str):
         # Call our API to analyze the product
         vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
         api_host = os.getenv("API_HOST", f"https://{vercel_url}")
-        api_url = f"{api_host}/analyze"
+        api_url = f"{api_host}/api/analyze"
         
-        try:
-            # Use the shared HTTP client with optimized connection pooling
-            client = get_http_client()
-            response = await client.post(api_url, params={"url": url}, timeout=30.0)
-            response_data = await response.json()
-            
-            if response.status_code != 200:
-                error_detail = response_data.get('error', 'Unknown error')
-                if response.status_code == 401:
-                    raise Exception("API authentication error: Please check that APIFY_TOKEN and HF_TOKEN are correctly set in environment variables.")
-                else:
-                    raise Exception(f"API error: {response.status_code} - {error_detail}")
-            
-            # Format the response with inline keyboard
-            value_emoji = "🟢" if response_data["value_score"] >= 7 else "🟡" if response_data["value_score"] >= 5 else "🔴"
-            
-            message = f"*{response_data['title']}*\n\n"
-            message += f"💰 Prezzo: {response_data['price']}\n"
-            message += f"⭐ Valore: {value_emoji} {response_data['value_score']}/10\n\n"
-            message += f"*Raccomandazione:* {response_data['recommendation']}\n\n"
-            
-            message += "*Punti di forza:*\n"
-            for pro in response_data['pros'][:3]:
-                message += f"✅ {pro}\n"
-            
-            message += "\n*Punti deboli:*\n"
-            for con in response_data['cons'][:3]:
-                message += f"❌ {con}\n"
-            
-            # Create inline keyboard for actions
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(text="🔄 Aggiorna analisi", callback_data=f"refresh_{url}")],
-                [InlineKeyboardButton(text="📊 Confronta prezzi", callback_data=f"compare_{url}")],
-                [InlineKeyboardButton(text="📱 Apri nel browser", url=url)],
-                [InlineKeyboardButton(text="📤 Condividi analisi", switch_inline_query=url)]
-            ])
-            
-            await update.message.reply_text(message, parse_mode="Markdown", reply_markup=keyboard)
-        except asyncio.TimeoutError:
-            # Handle timeout specifically
-            await update.message.reply_text(
-                "L'analisi sta richiedendo più tempo del previsto. Riprova più tardi."
-            )
-        finally:
-            # Ensure we close the client after use
-            await close_http_client()
+        # Use the shared HTTP client with optimized connection pooling
+        client = get_http_client()
+        response = await client.post(api_url, json={"url": url}, timeout=30.0)
+        response_data = await response.json()
+        
+        if response.status_code != 200:
+            error_detail = response_data.get('error', 'Unknown error')
+            raise Exception(f"API error: {response.status_code} - {error_detail}")
+        
+        return response_data
         
     except Exception as e:
-        error_message = "Mi dispiace, non sono riuscito ad analizzare questo prodotto. "
-        if "URL not supported" in str(e):
-            error_message += "Per favore, usa un link di Amazon o eBay."
-        elif "API authentication error" in str(e):
-            error_message += "C'è un problema con l'autenticazione API. L'amministratore deve verificare le chiavi API."
-        else:
-            error_message += f"Errore: {str(e)}"
-        await update.message.reply_text(error_message)
+        error_message = str(e)
+        await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {error_message}")
+        return {"status": "error", "error": error_message}
 
 # Export handlers for webhook_handler.py
 __all__ = ['start', 'handle_text', 'WorthItBot']

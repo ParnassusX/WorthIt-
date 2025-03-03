@@ -12,7 +12,8 @@ from worker.queue import enqueue_task
 async def test_complete_workflow(mock_update, mock_context, mock_redis, mock_http_client):
     """Test the complete workflow from bot to API to worker, simulating real user interaction"""
     # Setup mocks for the entire workflow
-    with patch('bot.bot.get_http_client') as mock_get_client, \
+    with patch('bot.bot.get_http_client', return_value=mock_http_client), \
+         patch('bot.bot.validate_url', return_value=True), \
          patch('worker.worker.get_redis_client', return_value=mock_redis), \
          patch('api.scraper.scrape_product') as mock_scrape, \
          patch('api.ml_processor.analyze_reviews') as mock_analyze, \
@@ -20,15 +21,13 @@ async def test_complete_workflow(mock_update, mock_context, mock_redis, mock_htt
          patch('worker.queue.get_redis_client', return_value=mock_redis):
         
         # Configure HTTP client mock
-        mock_client = AsyncMock()
-        mock_client.post.return_value = AsyncMock(
+        mock_http_client.post.return_value = AsyncMock(
             status_code=200,
             json=AsyncMock(return_value={
                 "task_id": "task-123",
                 "status": "processing"
             })
         )
-        mock_get_client.return_value = mock_client
         
         # Configure Redis mock for task queue with realistic task lifecycle
         mock_redis.lpush = AsyncMock(return_value=1)
@@ -80,7 +79,7 @@ async def test_complete_workflow(mock_update, mock_context, mock_redis, mock_htt
         await handle_text(mock_update, mock_context)
         
         # Verify API request was made
-        mock_client.post.assert_called_once()
+        mock_http_client.post.assert_called_once()
         
         # 2. Simulate worker processing the task
         task = {

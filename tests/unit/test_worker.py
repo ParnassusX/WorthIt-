@@ -15,29 +15,41 @@ async def test_process_task(task_worker, mock_redis):
     # Test the task processing functionality
     with patch('worker.worker.get_redis_client', return_value=mock_redis), \
          patch('api.scraper.scrape_product') as mock_scrape, \
-         patch('api.ml_processor.analyze_reviews') as mock_analyze:
+         patch('api.ml_processor.analyze_sentiment') as mock_sentiment, \
+         patch('api.ml_processor.extract_product_pros_cons') as mock_extract, \
+         patch('api.ml_processor.get_value_score') as mock_score:
         
-        # Configure mock returns as AsyncMock objects
+        # Configure mock returns
         product_data = {
             'title': 'Test Product',
             'price': 99.99,
-            'reviews': ['Great product', 'Worth the money']
-        }
-        analysis_result = {
-            'sentiment_score': 0.8,
-            'pros': ['Good quality'],
-            'cons': ['Expensive']
+            'reviews': [{'review': 'Great product'}, {'review': 'Worth the money'}]
         }
         
-        mock_scrape.side_effect = AsyncMock(return_value=product_data)
-        mock_analyze.side_effect = AsyncMock(return_value=analysis_result)
+        # Set up async mock returns as coroutines
+        async def mock_scrape_impl(*args, **kwargs):
+            return product_data
+        
+        async def mock_sentiment_impl(*args, **kwargs):
+            return {'score': 0.8, 'label': '4 stars'}
+        
+        async def mock_extract_impl(*args, **kwargs):
+            return (['Good quality'], ['Expensive'])
+        
+        async def mock_score_impl(*args, **kwargs):
+            return 0.75
+        
+        mock_scrape.side_effect = mock_scrape_impl
+        mock_sentiment.side_effect = mock_sentiment_impl
+        mock_extract.side_effect = mock_extract_impl
+        mock_score.side_effect = mock_score_impl
         
         test_task = {
             'id': 'task-123',
             'type': 'product_analysis',
             'data': {
                 'url': 'https://example.com/product',
-                'user_id': 456
+                'chat_id': 456
             }
         }
         
@@ -47,6 +59,8 @@ async def test_process_task(task_worker, mock_redis):
         assert result is not None
         assert 'status' in result
         assert result['status'] == 'completed'
+        assert 'result' in result
+        assert all(key in result['result'] for key in ['title', 'price', 'value_score', 'analysis'])
 
 # Test notification system
 @pytest.mark.asyncio

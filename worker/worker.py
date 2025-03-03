@@ -72,13 +72,30 @@ class TaskWorker:
                     product_data = await scrape_product(task['data']['url'])
                     
                     # Step 2: Process reviews with ML
-                    analysis_result = await analyze_reviews(product_data.get('reviews', []))
+                    # Import here to avoid circular imports
+                    from api.ml_processor import analyze_sentiment, extract_product_pros_cons, get_value_score
                     
-                    # Step 3: Calculate value score and compile results
+                    # Analyze sentiment of reviews
+                    sentiment_result = await analyze_sentiment(product_data.get('reviews', []))
+                    
+                    # Extract pros and cons
+                    pros, cons = await extract_product_pros_cons(product_data.get('reviews', []), product_data)
+                    
+                    # Calculate value score
+                    value_score = await get_value_score(product_data, {'average_sentiment': sentiment_result.get('score', 0.5)})
+                    
+                    # Compile results
+                    analysis_result = {
+                        'pros': pros,
+                        'cons': cons,
+                        'sentiment_score': sentiment_result.get('score', 0.5)
+                    }
+                    
+                    # Step 3: Compile final results
                     result = {
                         'title': product_data['title'],
                         'price': product_data['price'],
-                        'value_score': 0.75,  # Placeholder value
+                        'value_score': value_score,
                         'analysis': analysis_result
                     }
                     

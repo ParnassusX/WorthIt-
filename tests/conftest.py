@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from httpx import AsyncClient
 from redis.asyncio import Redis
 from unittest.mock import AsyncMock, patch, MagicMock
+from telegram import Update, Message, Chat, User
+from telegram.ext import ContextTypes
 from api.main import app
 from bot.bot import WorthItBot
 from worker.worker import TaskWorker
@@ -19,22 +21,57 @@ def event_loop():
     loop.close()
 
 @pytest.fixture
+def mock_update():
+    """Create a mock Telegram update object."""
+    update = MagicMock(spec=Update)
+    message = MagicMock(spec=Message)
+    chat = MagicMock(spec=Chat)
+    user = MagicMock(spec=User)
+    
+    # Configure the mock objects
+    chat.id = 123456789
+    user.id = 987654321
+    user.first_name = "Test User"
+    message.chat = chat
+    message.from_user = user
+    message.text = "/start"
+    message.reply_text = AsyncMock()
+    update.message = message
+    update.effective_chat = chat
+    update.effective_user = user
+    
+    return update
+
+@pytest.fixture
+def mock_context():
+    """Create a mock context for Telegram handlers."""
+    context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+    context.bot = MagicMock()
+    context.bot.send_message = AsyncMock(return_value=True)
+    return context
+
+@pytest.fixture
 def test_app():
     """Create a test instance of the FastAPI application."""
     return app
 
 @pytest.fixture
-def test_client():
+def test_client(test_app):
     """Create a test client for the FastAPI application."""
-    # TestClient has compatibility issues with newer httpx versions
-    # Use a direct instantiation without named parameters
-    return TestClient(app)
+    # Use httpx AsyncClient with ASGITransport
+    from httpx import AsyncClient, ASGITransport
+    
+    transport = ASGITransport(app=test_app)
+    return AsyncClient(transport=transport, base_url="http://test", follow_redirects=True)
 
 @pytest.fixture
-async def async_client():
+async def async_client(test_app):
     """Create an async test client for the FastAPI application."""
-    # Use base_url instead of app parameter for AsyncClient
-    async with httpx.AsyncClient(base_url="http://test") as client:
+    # Create a new AsyncClient with proper configuration using ASGITransport
+    from httpx import AsyncClient, ASGITransport
+    
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as client:
         yield client
 
 @pytest.fixture
