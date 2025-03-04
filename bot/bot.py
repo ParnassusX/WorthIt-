@@ -148,28 +148,28 @@ async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
         elif text == "⭐️ Prodotti popolari":
             await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
-            elif text == "ℹ️ Aiuto":
-                help_text = (
-                    "*Come usare WorthIt!*\n\n"
-                    "1️⃣ Invia un link di un prodotto\n"
-                    "2️⃣ Usa il pulsante 'Scansiona 📸' per aprire l'app web\n"
-                    "3️⃣ Ricevi un'analisi dettagliata sul valore reale del prodotto\n\n"
-                    "WorthIt! analizza recensioni e caratteristiche per dirti se un prodotto vale davvero il suo prezzo."
-                )
-                await update.message.reply_text(help_text, parse_mode="Markdown")
-            else:
-                await update.message.reply_text("Non ho capito. Invia un link di un prodotto o usa i pulsanti in basso.")
-        except RuntimeError as re:
-            if "Event loop is closed" in str(re):
-                print("Ignoring closed event loop error in handle_text")
-            else:
-                raise
-        except Exception as e:
-            print(f"Error in handle_text: {str(e)}")
-            try:
-                await update.message.reply_text("Mi dispiace, si è verificato un errore. Riprova più tardi.")
-            except:
-                pass
+        elif text == "ℹ️ Aiuto":
+            help_text = (
+                "*Come usare WorthIt!*\n\n"
+                "1️⃣ Invia un link di un prodotto\n"
+                "2️⃣ Usa il pulsante 'Scansiona 📸' per aprire l'app web\n"
+                "3️⃣ Ricevi un'analisi dettagliata sul valore reale del prodotto\n\n"
+                "WorthIt! analizza recensioni e caratteristiche per dirti se un prodotto vale davvero il suo prezzo."
+            )
+            await update.message.reply_text(help_text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text("Non ho capito. Invia un link di un prodotto o usa i pulsanti in basso.")
+    except RuntimeError as re:
+        if "Event loop is closed" in str(re):
+            print("Ignoring closed event loop error in handle_text")
+        else:
+            raise
+    except Exception as e:
+        print(f"Error in handle_text: {str(e)}")
+        try:
+            await update.message.reply_text("Mi dispiace, si è verificato un errore. Riprova più tardi.")
+        except:
+            pass
 
 
 async def analyze_product_url(update: Update, url: str):
