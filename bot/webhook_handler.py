@@ -10,6 +10,7 @@ import logging
 from dotenv import load_dotenv
 from .bot import start, handle_text
 from .http_client import get_http_client, close_http_client
+from worker.queue import enqueue_task
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +34,7 @@ app.add_middleware(
     allow_methods=['POST'],
     allow_headers=['Content-Type']
 )
+
 # Initialize bot instance
 bot_token = os.getenv('TELEGRAM_TOKEN')
 if not bot_token:
@@ -173,6 +175,116 @@ async def format_analysis_response(data: Dict[str, Any]) -> tuple[str, InlineKey
         [InlineKeyboardButton(text="📱 Apri nel browser", url=data['url'])],
         [InlineKeyboardButton(text="📤 Condividi analisi", switch_inline_query=data['url'])]
     ])
+    
+    return message, keyboard
+
+async def handle_callback_query(update: Update, context: Any):
+    """Handle callback queries from inline keyboard buttons"""
+    query = update.callback_query
+    await query.answer()
+    
+    action, url = query.data.split('_', 1)
+    
+    if action == "refresh":
+        try:
+            data = await analyze_product(url)
+            message, keyboard = await format_analysis_response(data)
+            await query.edit_message_text(
+                text=message,
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await query.edit_message_text(
+                text=f"❌ Errore nell'aggiornamento dell'analisi: {str(e)}",
+                parse_mode="Markdown"
+            )
+    elif action == "compare":
+        await query.edit_message_text(
+            text="🔄 Ricerca prezzi in corso...",
+            parse_mode="Markdown"
+        )
+        # Here you would implement price comparison logic
+        # For now, we'll just show a placeholder message
+        await query.edit_message_text(
+            text="📊 Funzionalità di confronta prezzi in arrivo!\n\nStay tuned per gli aggiornamenti.",
+            parse_mode="Markdown"
+        )
+
+def get_bot_instance() -> Bot:
+    """Get or create a Bot instance (singleton pattern)"""
+    global _bot_instance
+    if _bot_instance is None:
+        load_dotenv()
+        token = os.getenv("TELEGRAM_TOKEN")
+        if not token:
+            raise ValueError("TELEGRAM_TOKEN environment variable is not set")
+        _bot_instance = Bot(token)
+    return _bot_instance
+
+async def process_telegram_update(update: Update) -> None:
+    """Process a Telegram update by enqueueing it as a task."""
+    try:
+        # Convert update to dict for queue storage
+        update_dict = update.to_dict()
+        
+        # Create task for worker
+        task = {
+            'task_type': 'telegram_update',
+            'update_data': update_dict,
+            'status': 'pending'
+        }
+        
+        # Enqueue the task
+        await enqueue_task(task)
+        
+    except Exception as e:
+        logger.error(f"Error processing Telegram update: {e}")
+        raise
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    """Handle incoming webhook requests from Telegram."""
+    try:
+        # Parse the update
+        update_dict = await request.json()
+        update = Update.de_json(update_dict, _bot_instance)
+        
+        # Process the update through worker queue
+        await process_telegram_update(update)
+        
+        return {"status": "ok"}
+        
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def format_analysis_response(analysis_result: Dict[str, Any]) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+    """Format the analysis result into a message with optional keyboard markup."""
+    message = f"*{analysis_result.get('title', 'Prodotto')}*\n\n"
+    message += f"💰 Prezzo: {analysis_result.get('price', 'N/A')}\n"
+    message += f"⭐ Punteggio WorthIt: {analysis_result.get('value_score', 0)}/10\n\n"
+    
+    pros = analysis_result.get('pros', [])
+    cons = analysis_result.get('cons', [])
+    
+    if pros:
+        message += "✅ *Punti di forza:*\n"
+        for pro in pros[:3]:
+            message += f"• {pro}\n"
+        message += "\n"
+    
+    if cons:
+        message += "❌ *Punti deboli:*\n"
+        for con in cons[:3]:
+            message += f"• {con}\n"
+    
+    # Create inline keyboard if there's a product URL
+    keyboard = None
+    if url := analysis_result.get('url'):
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(text="🛒 Vedi Prodotto", url=url)]
+        ])
     
     return message, keyboard
 

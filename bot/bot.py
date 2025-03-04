@@ -107,47 +107,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Export the necessary components
 __all__ = ['WorthItBot', 'start', 'get_bot_instance']
 
-        async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        text = update.message.text
-        user_data = {} if context is None else context.user_data or {}
-        
-        try:
-            # Check if user is in URL input mode
-            if user_data.get('awaiting_url', False):
-                # Reset the awaiting_url flag
-                user_data['awaiting_url'] = False
-                
-                # Check if text contains a URL
-                url_pattern = r'https?://[^\s]+'
-                urls = re.findall(url_pattern, text)
-                
-                if urls or ("amazon" in text.lower() or "ebay" in text.lower()):
-                    # Process the URL
-                    url = urls[0] if urls else text
-                    await analyze_product_url(update, url)
-                else:
-                    await update.message.reply_text("Non sembra un link valido. Per favore, invia un link di un prodotto valido.")
-                    # Re-enable URL input mode since the input was invalid
-                    user_data['awaiting_url'] = True
-                    
-            elif text == "🔍 Cerca prodotto":
-                # Always set awaiting_url flag
+async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user_data = {} if context is None else context.user_data or {}
+    
+    try:
+        # Check if user is in URL input mode
+        if user_data.get('awaiting_url', False):
+            # Reset the awaiting_url flag
+            user_data['awaiting_url'] = False
+            
+            # Check if text contains a URL
+            url_pattern = r'https?://[^s]+'
+            urls = re.findall(url_pattern, text)
+            
+            if urls or ("amazon" in text.lower() or "ebay" in text.lower()):
+                # Process the URL
+                url = urls[0] if urls else text
+                await analyze_product_url(update, url)
+            else:
+                await update.message.reply_text("Non sembra un link valido. Per favore, invia un link di un prodotto valido.")
+                # Re-enable URL input mode since the input was invalid
                 user_data['awaiting_url'] = True
                 
-                try:
+        elif text == "🔍 Cerca prodotto":
+            # Always set awaiting_url flag
+            user_data['awaiting_url'] = True
+            
+            try:
+                await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare 🔗")
+            except RuntimeError as re:
+                if "Event loop is closed" in str(re):
+                    # Create a new event loop and retry
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
                     await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare 🔗")
-                except RuntimeError as re:
-                    if "Event loop is closed" in str(re):
-                        # Create a new event loop and retry
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare 🔗")
-                    else:
-                        raise
-            elif text == "📊 Le mie analisi":
-                await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
-            elif text == "⭐️ Prodotti popolari":
-                await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
+                else:
+                    raise
+        elif text == "📊 Le mie analisi":
+            await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
+        elif text == "⭐️ Prodotti popolari":
+            await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
             elif text == "ℹ️ Aiuto":
                 help_text = (
                     "*Come usare WorthIt!*\n\n"
@@ -287,15 +287,15 @@ def format_analysis_response(data: Dict[str, Any]) -> str:
 # Export handlers for webhook_handler.py
 __all__ = ['start', 'handle_text', 'WorthItBot']
 
-    async def run(self):
+async def run(self):
         await self.app.initialize()
         await self.app.start()
         await self.app.run_polling()
 
-    async def handle_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
 
-    async def handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_text = (
             "*Come usare WorthIt!*\n\n"
             "1️⃣ Invia un link di un prodotto\n"
@@ -305,19 +305,19 @@ __all__ = ['start', 'handle_text', 'WorthItBot']
         )
         await update.message.reply_text(help_text, parse_mode="Markdown")
 
-    async def handle_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context:
             context.user_data['awaiting_url'] = True
         await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare 🔗")
 
-    async def handle_popular(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_popular(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
 
-    async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
 
-    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f'Error occurred: {context.error}')
         try:
             if update and update.effective_message:

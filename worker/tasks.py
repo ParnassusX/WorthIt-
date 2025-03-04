@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Any
 from telegram import Bot, Update
 from .queue import get_redis_client, get_task_by_id
-from bot.webhook_handler import process_telegram_update, analyze_product, format_analysis_response, get_bot_instance
+from bot.webhook_handler import analyze_product, format_analysis_response, get_bot_instance
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +37,87 @@ async def process_telegram_update_task(task_data: Dict[str, Any]) -> None:
         
         bot = get_bot_instance()
         update = Update.de_json(update_data, bot)
-        await process_telegram_update(update)
+        
+        # Process commands and messages
+        if update.message:
+            if update.message.text:
+                if update.message.text.startswith('/'):
+                    await process_command(update)
+                else:
+                    await process_message(update)
+            
     except Exception as e:
         logger.error(f"Error processing Telegram update: {e}")
         raise
+
+async def process_command(update: Update) -> None:
+    """Process bot commands"""
+    command = update.message.text.split()[0][1:]
+    bot = get_bot_instance()
+    
+    if command == 'start':
+        # Create keyboard with proper button instances
+        from telegram import KeyboardButton, WebAppInfo, ReplyKeyboardMarkup
+        
+        keyboard = [
+            [KeyboardButton("Scansiona 📸", web_app=WebAppInfo(url=os.getenv('WEBAPP_URL')))],
+            [KeyboardButton("📊 Le mie analisi"), KeyboardButton("ℹ️ Aiuto")],
+            [KeyboardButton("🔍 Cerca prodotto"), KeyboardButton("⭐️ Prodotti popolari")]
+        ]
+        
+        reply_markup = ReplyKeyboardMarkup(
+            keyboard,
+            resize_keyboard=True,
+            input_field_placeholder='Seleziona un\'opzione'
+        )
+        
+        welcome_message = (
+            "Benvenuto in WorthIt! 🚀\n\n"
+            "Puoi:\n"
+            "📸 Scansionare un prodotto\n"
+            "🔍 Cercare un prodotto tramite link\n"
+            "📊 Vedere le tue analisi salvate\n"
+            "ℹ️ Ottenere aiuto\n"
+        )
+        
+        await update.message.reply_text(
+            welcome_message,
+            reply_markup=reply_markup
+        )
+
+async def process_message(update: Update) -> None:
+    """Process non-command messages"""
+    text = update.message.text
+    
+    if text == "🔍 Cerca prodotto":
+        await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare 🔗")
+    elif text == "📊 Le mie analisi":
+        await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
+    elif text == "⭐️ Prodotti popolari":
+        await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
+    elif text == "ℹ️ Aiuto":
+        help_text = (
+            "*Come usare WorthIt!*\n\n"
+            "1️⃣ Invia un link di un prodotto\n"
+            "2️⃣ Usa il pulsante 'Scansiona 📸' per aprire l'app web\n"
+            "3️⃣ Ricevi un'analisi dettagliata sul valore reale del prodotto\n\n"
+            "WorthIt! analizza recensioni e caratteristiche per dirti se un prodotto vale davvero il suo prezzo."
+        )
+        await update.message.reply_text(help_text, parse_mode="Markdown")
+    else:
+        # Check if it might be a product URL
+        url_pattern = r'https?://[^\s]+'
+        urls = re.findall(url_pattern, text)
+        
+        if urls or ("amazon" in text.lower() or "ebay" in text.lower()):
+            url = urls[0] if urls else text
+            await process_product_analysis_task({
+                'url': url,
+                'chat_id': update.message.chat_id,
+                'id': str(update.message.message_id)
+            })
+        else:
+            await update.message.reply_text("Non ho capito. Invia un link di un prodotto o usa i pulsanti in basso.")
 
 async def process_product_analysis_task(task_data: Dict[str, Any]) -> None:
     """Process a product analysis task and send results back to the user."""
