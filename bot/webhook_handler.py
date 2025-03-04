@@ -287,7 +287,12 @@ async def webhook_handler(request: Request):
         data = await request.json()
         update = Update.de_json(data, bot)
         
-        # Enqueue the task for background processing
+        # Handle /start command immediately
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            await process_telegram_update(update)
+            return {"status": "ok", "detail": "Start command processed"}
+        
+        # For other commands, enqueue the task for background processing
         from worker.queue import enqueue_task
         task = {
             'task_type': 'telegram_update',
@@ -299,7 +304,7 @@ async def webhook_handler(request: Request):
         await enqueue_task(task)
         
         # Send immediate acknowledgment
-        if update.message and update.message.text and not update.message.text.startswith("/start"):
+        if update.message and update.message.text:
             try:
                 await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
             except Exception as e:
