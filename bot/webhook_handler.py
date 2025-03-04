@@ -33,8 +33,12 @@ app.add_middleware(
     allow_methods=['POST'],
     allow_headers=['Content-Type']
 )
-# We'll use a more stateless approach instead of a global application instance
-_bot_instance: Optional[Bot] = None
+# Initialize bot instance
+bot_token = os.getenv('TELEGRAM_TOKEN')
+if not bot_token:
+    raise ValueError("TELEGRAM_TOKEN environment variable is not set")
+
+_bot_instance = get_bot_instance(bot_token)
 
 async def error_handler(update: object, context) -> None:
     """Handle errors in the telegram bot."""
@@ -292,6 +296,9 @@ async def webhook_handler(request: Request):
     try:
         # Get the bot instance (singleton)
         bot = get_bot_instance()
+        if not bot:
+            logger.error("Bot instance not initialized")
+            return {"status": "error", "detail": "Bot not initialized"}
         
         # Parse the update
         data = await request.json()
@@ -306,40 +313,14 @@ async def webhook_handler(request: Request):
         
         # Handle /start command immediately
         if update.message and update.message.text and update.message.text.startswith("/start"):
-            await process_telegram_update(update)
-            return {"status": "ok", "detail": "Start command processed"}
-        
-        # For product URLs, send acknowledgment before enqueueing
-        if update.message and update.message.text:
             try:
-                if update.message.text == "🔍 Cerca prodotto":
-                    # Process through handle_text to ensure proper state management
-                    await handle_text(update, None)
-                    return {"status": "ok", "detail": "Search prompt sent"}
-                elif any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
-                    # Send a more detailed acknowledgment message
-                    await update.message.reply_text(
-                        "🔄 Analisi in corso..."
-                        "\n\n1️⃣ Raccolta informazioni sul prodotto"
-                        "\n2️⃣ Analisi delle recensioni"
-                        "\n3️⃣ Valutazione del rapporto qualità/prezzo"
-                        "\n\nRiceverai i risultati dettagliati a breve! ⏳"
-                    )
+                await bot.start(update, None)
+                return {"status": "ok", "detail": "Start command processed"}
             except Exception as e:
-                print(f"Error sending acknowledgment: {e}")
-                if isinstance(e, RuntimeError) and "Event loop is closed" in str(e):
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        if update.message.text == "🔍 Cerca prodotto":
-                            await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
-                            return {"status": "ok", "detail": "Search prompt sent"}
-                        elif any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
-                            await update.message.reply_text("🔄 Analisi in corso... Riceverai i risultati a breve! ⏳")
-                    except Exception as retry_error:
-                        logger.error(f"Failed to send message after event loop retry: {retry_error}")
+                logger.error(f"Error processing start command: {e}")
+                return {"status": "error", "detail": str(e)}
         
-        # Enqueue the task for background processing
+        # For other commands, enqueue the task
         try:
             from worker.queue import enqueue_task, get_task_queue
             
@@ -369,22 +350,8 @@ async def webhook_handler(request: Request):
             
         except Exception as e:
             logger.error(f"Failed to enqueue task: {e}")
-            if isinstance(e, RuntimeError) and "Event loop is closed" in str(e):
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    # Retry task enqueuing with error handling
-                    task_id = await enqueue_task(task)
-                    return {"status": "ok", "detail": "Task enqueued after retry", "task_id": task_id}
-                except Exception as retry_error:
-                    logger.error(f"Task enqueue retry failed: {retry_error}")
-                    return {"status": "error", "detail": "Failed to process request after retry"}
             return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
     
     except Exception as e:
         logger.error(f"Error in webhook handler: {str(e)}")
-        try:
-            await close_http_client()
-        except Exception as close_error:
-            logger.error(f"Error closing HTTP client: {close_error}")
         return {"status": "error", "detail": "Internal server error"}
