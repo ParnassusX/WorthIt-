@@ -42,8 +42,14 @@ async def test_start_command(mock_update, mock_context):
     
     # Verify that reply_text was called
     mock_update.message.reply_text.assert_called_once()
-    # Check that the keyboard markup was included
-    assert "reply_markup" in mock_update.message.reply_text.call_args[1]
+    # Verify keyboard structure and web app integration
+    reply_markup = mock_update.message.reply_text.call_args[1]['reply_markup']
+    
+    # Check web app button details
+    web_app_button = reply_markup.keyboard[0][0]
+    assert web_app_button.text == "Scansiona 📸"
+    assert web_app_button.web_app.url.startswith("https://")
+    assert os.getenv("VERCEL_URL") in web_app_button.web_app.url
 
 # Test text message handler
 @pytest.mark.asyncio
@@ -51,13 +57,19 @@ async def test_handle_text_help(mock_update, mock_context):
     # Test handling the help command
     mock_update.message.text = "ℹ️ Aiuto"
     
+    # Simulate closed event loop error
+    mock_update.message.reply_text.side_effect = RuntimeError("Event loop is closed")
+    
     await handle_text(mock_update, mock_context)
     
-    # Verify that reply_text was called with help text
-    mock_update.message.reply_text.assert_called_once()
+    # Verify error recovery and message sent
+    assert mock_update.message.reply_text.call_count == 2
     args, kwargs = mock_update.message.reply_text.call_args
     assert "Come usare WorthIt!" in args[0]
     assert kwargs.get("parse_mode") == "Markdown"
+    
+    # Verify new event loop was created
+    assert asyncio.get_event_loop().is_closed() == False
 
 @pytest.mark.asyncio
 async def test_handle_text_search(mock_update, mock_context):

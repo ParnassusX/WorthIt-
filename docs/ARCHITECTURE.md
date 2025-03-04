@@ -86,6 +86,12 @@ WorthIt! is a Telegram bot that helps users evaluate product value through autom
     - Graceful handling of closed event loops
     - Request isolation to prevent cascading failures
     - Proper error management with custom handlers
+    - Rate limiting (5 requests/min)
+    - Vercel-optimized 10s timeouts
+- Redis connection enhancements
+    - SSL/TLS configuration for Upstash
+    - Exponential backoff retry logic
+    - Connection pooling and keepalive
 - **API**: Vercel Serverless Functions
   - Serverless functions for analysis
   - Edge caching where possible

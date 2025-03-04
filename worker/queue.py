@@ -12,24 +12,32 @@ logger = logging.getLogger(__name__)
 # Redis connection pool
 _redis_client = None
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def get_redis_client():
-    """Get a Redis client instance."""
+    """Get a Redis client instance with retry logic and connection pooling."""
     global _redis_client
-    if _redis_client is None:
+    if _redis_client is None or not await check_redis_connection(_redis_client):
         redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
         # Use SSL for Upstash Redis
         if "upstash" in redis_url and not redis_url.startswith("rediss://"):
             redis_url = redis_url.replace("redis://", "rediss://")
         
         try:
-            # Set SSL configuration for Upstash Redis
+            # Enhanced SSL configuration for Upstash Redis
             ssl_enabled = "upstash" in redis_url
             ssl_config = {
-                "ssl_cert_reqs": None,  # Don't verify SSL certificate
-                "ssl_check_hostname": False,  # Don't verify hostname
+                "ssl_cert_reqs": None,
+                "ssl_check_hostname": False,
                 "retry_on_timeout": True,
-                "max_connections": 10
-            } if ssl_enabled else {}
+                "max_connections": 20,  # Increased pool size
+                "max_idle_time": 300,  # 5 minutes idle timeout
+                "retry_on_error": [TimeoutError, ConnectionError],
+                "health_check_interval": 30  # More frequent health checks
+            } if ssl_enabled else {
+                "retry_on_timeout": True,
+                "max_connections": 20,
+                "max_idle_time": 300
+            }
             
             _redis_client = await Redis.from_url(
                 redis_url,
@@ -37,18 +45,31 @@ async def get_redis_client():
                 socket_timeout=5.0,
                 socket_connect_timeout=5.0,
                 socket_keepalive=True,
-                health_check_interval=60,
-                # Remove retry_on_timeout as it's already in ssl_config when needed
                 **ssl_config
             )
-            # Test the connection
-            await _redis_client.ping()
+            # Verify connection
+            if not await check_redis_connection(_redis_client):
+                raise ConnectionError("Failed to establish Redis connection")
+            
+            logger.info("Successfully established Redis connection")
             return _redis_client
+            
         except Exception as e:
             logger.error(f"Redis connection error: {e}")
             _redis_client = None
             raise
     return _redis_client
+
+async def check_redis_connection(client: Redis) -> bool:
+    """Check if Redis connection is alive and healthy."""
+    try:
+        if client is None:
+            return False
+        await client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {e}")
+        return False
 
 class TaskQueue:
     def __init__(self):
@@ -102,14 +123,17 @@ class TaskQueue:
             except:
                 pass
     
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     async def enqueue(self, task: Dict[str, Any]) -> bool:
-        """Add a task to the queue"""
+        """Add a task to the queue with retry logic"""
         try:
+            if not self.redis:
+                await self.connect()
             return await self.redis.lpush(self.queue_name, json.dumps(task))
         except Exception as e:
-            logger.error(f"Redis error during enqueue: {e}")
-            await self.connect()
-            return await self.redis.lpush(self.queue_name, json.dumps(task))
+            logger.error(f"Redis enqueue error: {e}", exc_info=True)
+            await self.connect()  # Force reconnect on error
+            raise
     
     async def dequeue(self) -> Dict[str, Any]:
         """Get a task from the queue, blocking if empty"""

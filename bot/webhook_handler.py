@@ -18,7 +18,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
 app = FastAPI()
+
+# Rate limiting for production
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_methods=['POST'],
+    allow_headers=['Content-Type']
+)
 # We'll use a more stateless approach instead of a global application instance
 _bot_instance: Optional[Bot] = None
 
@@ -252,6 +266,7 @@ async def root():
     return {"message": "WorthIt! Bot API is running. Use /webhook for Telegram updates."}
 
 @app.post("/webhook")
+@limiter.limit("5/minute")
 async def webhook_handler(request: Request):
     """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
     try:

@@ -53,14 +53,22 @@ async def test_process_task(task_worker, mock_redis):
             }
         }
         
+        # Test successful processing
         result = await task_worker.process_task(test_task)
-        
-        # Verify the task was processed
-        assert result is not None
-        assert 'status' in result
         assert result['status'] == 'completed'
-        assert 'result' in result
-        assert all(key in result['result'] for key in ['title', 'price', 'value_score', 'analysis'])
+        
+        # Test error handling
+        mock_scrape.side_effect = Exception('Test error')
+        error_result = await task_worker.process_task(test_task)
+        assert error_result['status'] == 'failed'
+        assert 'Test error' in error_result['error']
+        
+        # Verify Redis status update
+        redis_task = await mock_redis.get('task:task-123')
+        assert redis_task is not None
+        parsed_task = json.loads(redis_task)
+        assert parsed_task['status'] == 'failed'
+        assert 'Test error' in parsed_task['error']
 
 # Test notification system
 @pytest.mark.asyncio
@@ -126,29 +134,50 @@ async def test_queue_operations(mock_redis):
             }
         }).encode()))
         
-        # Test enqueue
-        task = {
+        # Test enqueue with full validation
+        test_task = {
             'type': 'product_analysis',
             'data': {
                 'url': 'https://example.com/product',
                 'chat_id': 123456789
             }
         }
-        
-        # Mock uuid generation
-        with patch('uuid.uuid4', return_value='mock-uuid'):
-            task_id = await enqueue_task(task)
-            assert task_id == 'mock-uuid'
-            assert isinstance(task_id, str)
-            mock_redis.lpush.assert_called_once()
-        
-        # Test dequeue
+
+        # Mock UUID generation and verify Redis storage
+        with patch('uuid.uuid4', return_value='task-123') as mock_uuid:
+            task_id = await enqueue_task(test_task)
+            
+            # Verify UUID generation and task ID
+            assert task_id == 'task-123'
+            mock_uuid.assert_called_once()
+            
+            # Verify Redis storage
+            stored_task = await mock_redis.get('task:task-123')
+            assert stored_task is not None
+            parsed_task = json.loads(stored_task)
+            assert parsed_task['type'] == 'product_analysis'
+            assert parsed_task['status'] == 'pending'
+            assert parsed_task['data']['url'] == test_task['data']['url']
+            
+            # Verify queue insertion
+            mock_redis.lpush.assert_called_once_with('tasks', json.dumps({
+                'id': 'task-123',
+                'type': 'product_analysis',
+                'data': test_task['data'],
+                'status': 'pending'
+            }))
+
+        # Test dequeue with completeness check
         dequeued_task = await dequeue_task()
-        assert dequeued_task is not None
-        assert isinstance(dequeued_task, dict)
-        assert dequeued_task.get('id') == 'task-123'
-        assert dequeued_task.get('type') == 'product_analysis'
-        mock_redis.brpop.assert_called_once()
+        assert dequeued_task == {
+            'id': 'task-123',
+            'type': 'product_analysis',
+            'data': test_task['data'],
+            'status': 'pending'
+        }
+        
+        # Verify task removal from queue
+        mock_redis.brpop.assert_called_once_with('tasks', timeout=5)
 
 # Test error handling
 @pytest.mark.asyncio

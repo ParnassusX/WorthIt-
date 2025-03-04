@@ -82,16 +82,27 @@ class TaskWorker:
         except Exception as e:
             logger.error(f"Error processing Telegram update: {e}")
     
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def process_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
-        """Process a single task from the queue"""
+        """Process a single task from the queue with retry logic and error handling"""
         try:
-            logger.info(f"Processing task: {task.get('task_type', 'unknown')}")
+            task_id = task.get('id', str(uuid.uuid4()))
+            logger.info(f"Processing task {task_id}: {task.get('task_type', 'unknown')}")
+            
+            # Update task status to processing
+            await self.update_task_status(task_id, "processing")
             
             # Handle different task types
             if task.get('task_type') == 'telegram_update':
-                # Process Telegram update
-                await process_telegram_update(task.get('update_data', {}))
-                return {"status": "completed"}
+                # Process Telegram update with error recovery
+                try:
+                    await process_telegram_update(task.get('update_data', {}))
+                    await self.update_task_status(task_id, "completed")
+                    return {"status": "completed", "task_id": task_id}
+                except Exception as e:
+                    logger.error(f"Error processing Telegram update: {e}")
+                    await self.update_task_status(task_id, "failed", {"error": str(e)})
+                    raise
                 
             elif task.get('task_type') == 'product_analysis':
                 # Import here to avoid circular imports
