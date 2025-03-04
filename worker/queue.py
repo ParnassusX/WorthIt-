@@ -162,6 +162,16 @@ async def enqueue_task(task):
     # Generate a unique task ID if not provided
     task_id = task.get('id') or str(uuid.uuid4())
     task['id'] = task_id
+    
+    # Store task details in a hash
+    task_key = f"task:{task_id}"
+    await redis_client.hset(task_key, mapping={
+        'status': task.get('status', 'pending'),
+        'data': json.dumps(task),
+        'created_at': asyncio.get_event_loop().time()
+    })
+    
+    # Add task to queue
     await redis_client.lpush('tasks', json.dumps(task))
     return task_id
 
@@ -173,3 +183,53 @@ async def dequeue_task():
         _, task_json = result
         return json.loads(task_json)
     return None
+
+async def get_task_by_id(task_id: str) -> Optional[Dict[str, Any]]:
+    """Get task details by task ID."""
+    try:
+        redis_client = await get_redis_client()
+        task_key = f"task:{task_id}"
+        
+        # Get task details from hash
+        task_data = await redis_client.hgetall(task_key)
+        if not task_data:
+            return None
+        
+        # Parse the stored JSON data
+        task_info = json.loads(task_data['data'])
+        task_info['status'] = task_data['status']
+        task_info['created_at'] = float(task_data['created_at'])
+        
+        return task_info
+    except Exception as e:
+        logger.error(f"Error getting task {task_id}: {e}")
+        return None
+
+async def update_task_status(task_id: str, status: str, result: Optional[Dict[str, Any]] = None) -> bool:
+    """Update task status and optionally store results."""
+    try:
+        redis_client = await get_redis_client()
+        task_key = f"task:{task_id}"
+        
+        # Get existing task data
+        task_data = await redis_client.hgetall(task_key)
+        if not task_data:
+            return False
+        
+        # Update task data
+        task_info = json.loads(task_data['data'])
+        task_info['status'] = status
+        if result:
+            task_info['result'] = result
+        
+        # Store updated task data
+        await redis_client.hset(task_key, mapping={
+            'status': status,
+            'data': json.dumps(task_info),
+            'updated_at': asyncio.get_event_loop().time()
+        })
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error updating task {task_id}: {e}")
+        return False
