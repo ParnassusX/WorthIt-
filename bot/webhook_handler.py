@@ -8,7 +8,7 @@ import re
 import asyncio
 import logging
 from dotenv import load_dotenv
-from .bot import start, handle_text
+from .bot import start, handle_text, analyze_product_url, format_analysis_response, get_bot_instance
 from .http_client import get_http_client, close_http_client
 from worker.queue import enqueue_task
 

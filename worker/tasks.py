@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Any
 from telegram import Bot, Update
 from .queue import get_redis_client, get_task_by_id
-from bot.webhook_handler import analyze_product, format_analysis_response, get_bot_instance
+from bot.bot import get_bot_instance, analyze_product_url, format_analysis_response
 
 logger = logging.getLogger(__name__)
 
