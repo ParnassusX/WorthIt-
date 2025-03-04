@@ -40,15 +40,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    user_data = context.user_data
     
-    # Check if text contains a URL
-    url_pattern = r'https?://[^\s]+'
-    urls = re.findall(url_pattern, text)
-    
-    if urls:
-        # Found a URL, assume it's a product URL
-        await analyze_product_url(update, urls[0])
+    # Check if user is in URL input mode
+    if user_data.get('awaiting_url', False):
+        # Reset the awaiting_url flag
+        user_data['awaiting_url'] = False
+        
+        # Check if text contains a URL
+        url_pattern = r'https?://[^\s]+'
+        urls = re.findall(url_pattern, text)
+        
+        if urls or ("amazon" in text.lower() or "ebay" in text.lower()):
+            # Process the URL
+            url = urls[0] if urls else text
+            await analyze_product_url(update, url)
+        else:
+            await update.message.reply_text("Non sembra un link valido. Per favore, invia un link di un prodotto valido.")
+            
     elif text == "🔍 Cerca prodotto":
+        user_data['awaiting_url'] = True
         await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare")
     elif text == "📊 Le mie analisi":
         await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
@@ -64,12 +75,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(help_text, parse_mode="Markdown")
     else:
-        # Try to interpret as a product URL even if it doesn't match the pattern
-        if "amazon" in text.lower() or "ebay" in text.lower():
-            await update.message.reply_text("Sto provando ad analizzare questo come un link prodotto...")
-            await analyze_product_url(update, text)
-        else:
-            await update.message.reply_text("Non ho capito. Invia un link di un prodotto o usa i pulsanti in basso.")
+        await update.message.reply_text("Non ho capito. Invia un link di un prodotto o usa i pulsanti in basso.")
+
 
 async def analyze_product_url(update: Update, url: str):
     try:
@@ -93,12 +100,40 @@ async def analyze_product_url(update: Update, url: str):
             error_detail = response_data.get('error', 'Unknown error')
             raise Exception(f"API error: {response.status_code} - {error_detail}")
         
+        # Format and send the analysis results
+        analysis_text = format_analysis_response(response_data)
+        await update.message.reply_text(analysis_text, parse_mode="Markdown")
         return response_data
         
     except Exception as e:
         error_message = str(e)
         await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {error_message}")
         return {"status": "error", "error": error_message}
+
+def format_analysis_response(data: Dict[str, Any]) -> str:
+    """Format the analysis response into a readable message."""
+    worth_it_score = data.get('worth_it_score', 0)
+    price = data.get('price', 'N/A')
+    title = data.get('title', 'Prodotto')
+    pros = data.get('pros', [])
+    cons = data.get('cons', [])
+    
+    message = f"*{title}*\n\n"
+    message += f"💰 Prezzo: {price}\n"
+    message += f"⭐ Punteggio WorthIt: {worth_it_score}/10\n\n"
+    
+    if pros:
+        message += "✅ *Punti di forza:*\n"
+        for pro in pros:
+            message += f"• {pro}\n"
+        message += "\n"
+    
+    if cons:
+        message += "❌ *Punti deboli:*\n"
+        for con in cons:
+            message += f"• {con}\n"
+    
+    return message
 
 # Export handlers for webhook_handler.py
 __all__ = ['start', 'handle_text', 'WorthItBot']
