@@ -287,9 +287,23 @@ async def webhook_handler(request: Request):
         data = await request.json()
         update = Update.de_json(data, bot)
         
+        # Create a new event loop for this request if needed
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
         # Handle /start command immediately
         if update.message and update.message.text and update.message.text.startswith("/start"):
-            await process_telegram_update(update)
+            try:
+                await process_telegram_update(update)
+            except RuntimeError as re:
+                if "Event loop is closed" in str(re):
+                    # Create a new event loop and retry
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    await process_telegram_update(update)
             return {"status": "ok", "detail": "Start command processed"}
         
         # For other commands, enqueue the task for background processing
@@ -307,6 +321,12 @@ async def webhook_handler(request: Request):
         if update.message and update.message.text:
             try:
                 await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+            except RuntimeError as re:
+                if "Event loop is closed" in str(re):
+                    # Create a new event loop and retry
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
             except Exception as e:
                 print(f"Error sending acknowledgment: {e}")
         
@@ -314,9 +334,10 @@ async def webhook_handler(request: Request):
     
     except Exception as e:
         print(f"Error in webhook handler: {str(e)}")
-        # Always return success to Telegram
-        return {"status": "ok", "detail": str(e)}
         # Ensure client is closed on outer exceptions
-        await close_http_client()
+        try:
+            await close_http_client()
+        except Exception as close_error:
+            print(f"Error closing HTTP client: {close_error}")
         # Always return success to Telegram
         return {"status": "ok", "detail": str(e)}
