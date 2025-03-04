@@ -15,26 +15,48 @@ class WorthItBot:
         self.setup_handlers()
     
     def setup_handlers(self):
-        from telegram import MenuButtonWebApp, WebAppInfo, KeyboardButton
+        from telegram import MenuButtonWebApp, WebAppInfo, KeyboardButton, BotCommand
+        from telegram.ext import CallbackQueryHandler
         
         # Register bot commands with Telegram servers
         commands = [
-            ('start', 'Avvia il bot'),
-            ('analisi', 'Le tue analisi salvate'),
-            ('aiuto', 'Guida e informazioni'),
-            ('cerca', 'Cerca un prodotto'),
-            ('popolari', 'Prodotti più popolari')
+            BotCommand('start', 'Avvia il bot'),
+            BotCommand('analisi', 'Le tue analisi salvate'),
+            BotCommand('aiuto', 'Guida e informazioni'),
+            BotCommand('cerca', 'Cerca un prodotto'),
+            BotCommand('popolari', 'Prodotti più popolari')
         ]
         
         async def post_init(app):
+            # Set commands and menu button
             await app.bot.set_my_commands(commands)
-            await app.bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text='Menu', web_app=WebAppInfo(url=os.getenv('WEBAPP_URL'))))
+            await app.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text='Menu',
+                    web_app=WebAppInfo(url=os.getenv('WEBAPP_URL', 'https://worthit-webapp.vercel.app'))
+                )
+            )
+            
+            # Initialize Redis connection for task queue
+            from worker.queue import initialize_queue
+            await initialize_queue()
 
         self.app.post_init = post_init
 
+        # Add command handlers
         self.app.add_handler(CommandHandler('start', self.start))
+        self.app.add_handler(CommandHandler('analisi', self.handle_analysis))
+        self.app.add_handler(CommandHandler('aiuto', self.handle_help))
+        self.app.add_handler(CommandHandler('cerca', self.handle_search))
+        self.app.add_handler(CommandHandler('popolari', self.handle_popular))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
-    
+        
+        # Add callback query handler for inline keyboard actions
+        self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
+        
+        # Add error handler
+        self.app.add_error_handler(self.error_handler)
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         from telegram import KeyboardButton, WebAppInfo, ReplyKeyboardMarkup
         
@@ -65,7 +87,27 @@ class WorthItBot:
             reply_markup=reply_markup
         )
 
-    async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Create a global bot instance
+_bot_instance = None
+
+def get_bot_instance(token: str = None) -> WorthItBot:
+    global _bot_instance
+    if _bot_instance is None and token:
+        _bot_instance = WorthItBot(token)
+    return _bot_instance
+
+# Standalone command handlers for webhook integration
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bot = get_bot_instance()
+    if bot:
+        await bot.start(update, context)
+    else:
+        raise Exception("Bot instance not initialized")
+
+# Export the necessary components
+__all__ = ['WorthItBot', 'start', 'get_bot_instance']
+
+        async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text
         user_data = {} if context is None else context.user_data or {}
         
@@ -245,7 +287,42 @@ def format_analysis_response(data: Dict[str, Any]) -> str:
 # Export handlers for webhook_handler.py
 __all__ = ['start', 'handle_text', 'WorthItBot']
 
-async def run(self):
+    async def run(self):
         await self.app.initialize()
         await self.app.start()
         await self.app.run_polling()
+
+    async def handle_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
+
+    async def handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        help_text = (
+            "*Come usare WorthIt!*\n\n"
+            "1️⃣ Invia un link di un prodotto\n"
+            "2️⃣ Usa il pulsante 'Scansiona 📸' per aprire l'app web\n"
+            "3️⃣ Ricevi un'analisi dettagliata sul valore reale del prodotto\n\n"
+            "WorthIt! analizza recensioni e caratteristiche per dirti se un prodotto vale davvero il suo prezzo."
+        )
+        await update.message.reply_text(help_text, parse_mode="Markdown")
+
+    async def handle_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if context:
+            context.user_data['awaiting_url'] = True
+        await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare 🔗")
+
+    async def handle_popular(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("Funzionalità in arrivo nelle prossime versioni!")
+
+    async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+
+    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        print(f'Error occurred: {context.error}')
+        try:
+            if update and update.effective_message:
+                await update.effective_message.reply_text(
+                    "Mi dispiace, si è verificato un errore. Riprova più tardi."
+                )
+        except Exception as e:
+            print(f'Error in error handler: {e}')

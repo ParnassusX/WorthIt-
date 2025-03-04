@@ -226,12 +226,32 @@ async def process_telegram_update(update: Update) -> None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
+        # Get bot instance and ensure it's initialized
+        bot = get_bot_instance()
+        if not bot:
+            raise Exception("Bot instance not initialized")
+        
         # Process the update
         if update.message and update.message.text:
-            await handle_text(update, None)
+            if update.message.text.startswith('/'):
+                # Handle commands
+                command = update.message.text.split()[0][1:]  # Remove the '/' prefix
+                if command == 'start':
+                    await bot.start(update, None)
+                elif command == 'analisi':
+                    await bot.handle_analysis(update, None)
+                elif command == 'aiuto':
+                    await bot.handle_help(update, None)
+                elif command == 'cerca':
+                    await bot.handle_search(update, None)
+                elif command == 'popolari':
+                    await bot.handle_popular(update, None)
+                else:
+                    await update.message.reply_text("Comando non riconosciuto. Usa /aiuto per vedere i comandi disponibili.")
+            else:
+                await bot.handle_text(update, None)
         elif update.callback_query:
-            # Handle callback queries here if needed
-            pass
+            await bot.handle_callback_query(update, None)
     except RuntimeError as re:
         if "Event loop is closed" in str(re):
             # Create a new event loop and retry once
@@ -297,54 +317,74 @@ async def webhook_handler(request: Request):
                     await handle_text(update, None)
                     return {"status": "ok", "detail": "Search prompt sent"}
                 elif any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
-                    await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+                    # Send a more detailed acknowledgment message
+                    await update.message.reply_text(
+                        "🔄 Analisi in corso..."
+                        "\n\n1️⃣ Raccolta informazioni sul prodotto"
+                        "\n2️⃣ Analisi delle recensioni"
+                        "\n3️⃣ Valutazione del rapporto qualità/prezzo"
+                        "\n\nRiceverai i risultati dettagliati a breve! ⏳"
+                    )
             except Exception as e:
                 print(f"Error sending acknowledgment: {e}")
-                # Create a new event loop if needed
                 if isinstance(e, RuntimeError) and "Event loop is closed" in str(e):
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                    if update.message.text == "🔍 Cerca prodotto":
-                        await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
-                        return {"status": "ok", "detail": "Search prompt sent"}
-                    elif any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
-                        await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+                    try:
+                        if update.message.text == "🔍 Cerca prodotto":
+                            await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
+                            return {"status": "ok", "detail": "Search prompt sent"}
+                        elif any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                            await update.message.reply_text("🔄 Analisi in corso... Riceverai i risultati a breve! ⏳")
+                    except Exception as retry_error:
+                        logger.error(f"Failed to send message after event loop retry: {retry_error}")
         
-        # Enqueue the task for background processing with proper error handling
+        # Enqueue the task for background processing
         try:
             from worker.queue import enqueue_task, get_task_queue
             
-            # Initialize task queue first to ensure Redis connection
+            # Initialize task queue with connection check
             task_queue = get_task_queue()
             await task_queue.connect()
             
+            # Create task with improved metadata
             task = {
                 'task_type': 'telegram_update',
                 'update_data': data,
                 'chat_id': update.effective_chat.id if update.effective_chat else None,
-                'created_at': asyncio.get_event_loop().time()
+                'created_at': asyncio.get_event_loop().time(),
+                'status': 'pending',
+                'priority': 'high' if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]) else 'normal'
             }
             
             task_id = await enqueue_task(task)
-            logger.info(f"Task {task_id} enqueued successfully")
+            logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
             
-            return {"status": "ok", "detail": "Task enqueued for processing", "task_id": task_id}
+            return {
+                "status": "ok", 
+                "detail": "Task enqueued for processing", 
+                "task_id": task_id,
+                "priority": task['priority']
+            }
             
         except Exception as e:
             logger.error(f"Failed to enqueue task: {e}")
-            # Create a new event loop if needed
             if isinstance(e, RuntimeError) and "Event loop is closed" in str(e):
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                # Retry task enqueuing once
-                task_id = await enqueue_task(task)
-                return {"status": "ok", "detail": "Task enqueued after retry", "task_id": task_id}
+                try:
+                    # Retry task enqueuing with error handling
+                    task_id = await enqueue_task(task)
+                    return {"status": "ok", "detail": "Task enqueued after retry", "task_id": task_id}
+                except Exception as retry_error:
+                    logger.error(f"Task enqueue retry failed: {retry_error}")
+                    return {"status": "error", "detail": "Failed to process request after retry"}
             return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
     
     except Exception as e:
-        print(f"Error in webhook handler: {str(e)}")
+        logger.error(f"Error in webhook handler: {str(e)}")
         try:
             await close_http_client()
         except Exception as close_error:
-            print(f"Error closing HTTP client: {close_error}")
-        return {"status": "ok", "detail": str(e)}
+            logger.error(f"Error closing HTTP client: {close_error}")
+        return {"status": "error", "detail": "Internal server error"}
