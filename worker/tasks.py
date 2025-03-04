@@ -47,28 +47,57 @@ async def process_product_analysis_task(task_data: Dict[str, Any]) -> None:
     try:
         url = task_data.get('url')
         chat_id = task_data.get('chat_id')
+        task_id = task_data.get('id')
         if not url or not chat_id:
             raise ValueError("Missing required task data (url or chat_id)")
         
         # Get bot instance
         bot = get_bot_instance()
         
+        # Send initial status message
+        status_message = await bot.send_message(
+            chat_id=chat_id,
+            text="🔄 Analisi in corso..."
+        )
+        
         try:
+            # Update task status
+            redis_client = await get_redis_client()
+            await redis_client.hset(f"task:{task_id}", 'status', 'analyzing')
+            
+            # Send progress update
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=status_message.message_id,
+                text="🔍 Raccolta informazioni sul prodotto..."
+            )
+            
             # Perform the analysis
             analysis_result = await analyze_product(url)
+            
+            # Update progress
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=status_message.message_id,
+                text="✨ Elaborazione dei risultati..."
+            )
             
             # Format the response
             message, keyboard = await format_analysis_response(analysis_result)
             
-            # Send the results back to the user
-            await bot.send_message(
+            # Update task status to completed
+            await redis_client.hset(f"task:{task_id}", 'status', 'completed')
+            
+            # Send the final results
+            await bot.edit_message_text(
                 chat_id=chat_id,
+                message_id=status_message.message_id,
                 text=message,
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
         except Exception as analysis_error:
-            error_message = "Mi dispiace, si è verificato un errore durante l'analisi del prodotto. "
+            error_message = "❌ Mi dispiace, si è verificato un errore durante l'analisi del prodotto. "
             if "Invalid product URL" in str(analysis_error):
                 error_message += "Assicurati di usare un link valido di Amazon o eBay."
             elif "API authentication error" in str(analysis_error):
@@ -76,8 +105,13 @@ async def process_product_analysis_task(task_data: Dict[str, Any]) -> None:
             else:
                 error_message += "Riprova più tardi."
             
-            await bot.send_message(
+            # Update task status to failed
+            await redis_client.hset(f"task:{task_id}", 'status', 'failed')
+            
+            # Update the status message with error
+            await bot.edit_message_text(
                 chat_id=chat_id,
+                message_id=status_message.message_id,
                 text=error_message
             )
     except Exception as e:
