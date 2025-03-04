@@ -57,19 +57,50 @@ class TaskWorker:
         if not self.telegram_token:
             logger.warning("TELEGRAM_TOKEN environment variable is not set")
     
+    async def process_telegram_update(update_data: Dict[str, Any]) -> None:
+        """Process a Telegram update from the queue"""
+        try:
+            # Create a new bot instance
+            bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
+            
+            # Parse the update
+            update = Update.de_json(update_data, bot)
+            
+            # Ensure we have a valid event loop
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Import the process_telegram_update function from webhook_handler
+            from bot.webhook_handler import process_telegram_update as process_update
+            
+            # Process the update
+            await process_update(update)
+            
+        except Exception as e:
+            logger.error(f"Error processing Telegram update: {e}")
+    
     async def process_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """Process a single task from the queue"""
         try:
-            logger.info(f"Processing task: {task['type']}")
+            logger.info(f"Processing task: {task.get('task_type', 'unknown')}")
             
-            if task['type'] == 'product_analysis':
+            # Handle different task types
+            if task.get('task_type') == 'telegram_update':
+                # Process Telegram update
+                await process_telegram_update(task.get('update_data', {}))
+                return {"status": "completed"}
+                
+            elif task.get('task_type') == 'product_analysis':
                 # Import here to avoid circular imports
                 from api.scraper import scrape_product
                 from api.ml_processor import analyze_reviews
                 
                 try:
                     # Step 1: Scrape product data
-                    product_data = await scrape_product(task['data']['url'])
+                    product_data = await scrape_product(task['url'])
                     
                     # Step 2: Process reviews with ML
                     # Import here to avoid circular imports
@@ -88,7 +119,9 @@ class TaskWorker:
                     analysis_result = {
                         'pros': pros,
                         'cons': cons,
-                        'sentiment_score': sentiment_result.get('score', 0.5)
+                        'sentiment_score': sentiment_result.get('score', 0.5),
+                        'value_score': value_score,
+                        'recommendation': get_recommendation(value_score)
                     }
                     
                     # Step 3: Compile final results
@@ -96,22 +129,64 @@ class TaskWorker:
                         'title': product_data['title'],
                         'price': product_data['price'],
                         'value_score': value_score,
-                        'analysis': analysis_result
+                        'url': task['url'],
+                        'pros': pros,
+                        'cons': cons,
+                        'recommendation': get_recommendation(value_score)
                     }
                     
                     # Store result in Redis
                     redis_client = await get_redis_client()
-                    await redis_client.set(f"task:{task['id']}", json.dumps(result))
+                    await redis_client.set(f"task:{task.get('id', 'unknown')}", json.dumps(result))
+                    
+                    # Notify user if chat_id is provided
+                    if task.get('chat_id'):
+                        try:
+                            bot = Bot(token=self.telegram_token)
+                            message = f"*{result['title']}*\n\n"
+                            message += f"💰 Prezzo: {result['price']}\n"
+                            message += f"⭐ Punteggio WorthIt: {result['value_score']}/10\n\n"
+                            
+                            if pros:
+                                message += "✅ *Punti di forza:*\n"
+                                for pro in pros[:3]:
+                                    message += f"• {pro}\n"
+                                message += "\n"
+                            
+                            if cons:
+                                message += "❌ *Punti deboli:*\n"
+                                for con in cons[:3]:
+                                    message += f"• {con}\n"
+                            
+                            await bot.send_message(
+                                chat_id=task['chat_id'],
+                                text=message,
+                                parse_mode="Markdown"
+                            )
+                        except Exception as notify_error:
+                            logger.error(f"Error notifying user: {notify_error}")
                     
                     return {"status": "completed", "result": result}
                     
                 except Exception as analysis_error:
                     logger.error(f"Analysis error: {analysis_error}")
+                    
+                    # Notify user of error if chat_id is provided
+                    if task.get('chat_id'):
+                        try:
+                            bot = Bot(token=self.telegram_token)
+                            await bot.send_message(
+                                chat_id=task['chat_id'],
+                                text=f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {str(analysis_error)}"
+                            )
+                        except Exception as notify_error:
+                            logger.error(f"Error notifying user of error: {notify_error}")
+                    
                     return {"status": "error", "error_message": str(analysis_error)}
             
             else:
-                logger.warning(f"Unknown task type: {task['type']}")
-                return {"status": "error", "error_message": f"Unknown task type: {task['type']}"}
+                logger.warning(f"Unknown task type: {task.get('task_type', 'unknown')}")
+                return {"status": "error", "error_message": f"Unknown task type: {task.get('task_type', 'unknown')}"}
                 
         except Exception as e:
             logger.error(f"Error processing task: {e}")

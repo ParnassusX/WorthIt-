@@ -45,8 +45,15 @@ async def analyze_product(url: str, chat_id: int = None) -> Dict[str, Any]:
     api_url = f"{api_host}/analyze"
     
     try:
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
         # Enqueue the task for background processing
-        from worker.queue import get_task_queue
+        from worker.queue import enqueue_task
         
         task = {
             'task_type': 'product_analysis',
@@ -56,8 +63,7 @@ async def analyze_product(url: str, chat_id: int = None) -> Dict[str, Any]:
         }
         
         # Add task to Redis queue
-        queue = get_task_queue()
-        await queue.enqueue(task)
+        await enqueue_task(task)
         
         # Return initial response
         return {
@@ -66,7 +72,7 @@ async def analyze_product(url: str, chat_id: int = None) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Failed to enqueue task: {e}")
+        print(f"Failed to enqueue task: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to start analysis: {str(e)}"
@@ -287,7 +293,7 @@ async def webhook_handler(request: Request):
         data = await request.json()
         update = Update.de_json(data, bot)
         
-        # Create a new event loop for this request if needed
+        # Ensure we have a valid event loop
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -296,17 +302,30 @@ async def webhook_handler(request: Request):
         
         # Handle /start command immediately
         if update.message and update.message.text and update.message.text.startswith("/start"):
-            try:
-                await process_telegram_update(update)
-            except RuntimeError as re:
-                if "Event loop is closed" in str(re):
-                    # Create a new event loop and retry
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    await process_telegram_update(update)
+            await process_telegram_update(update)
             return {"status": "ok", "detail": "Start command processed"}
         
-        # For other commands, enqueue the task for background processing
+        # For product URLs, send acknowledgment before enqueueing
+        if update.message and update.message.text:
+            try:
+                if update.message.text == "🔍 Cerca prodotto":
+                    await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
+                    return {"status": "ok", "detail": "Search prompt sent"}
+                elif any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                    await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+            except Exception as e:
+                print(f"Error sending acknowledgment: {e}")
+                # Create a new event loop if needed
+                if isinstance(e, RuntimeError) and "Event loop is closed" in str(e):
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    if update.message.text == "🔍 Cerca prodotto":
+                        await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
+                        return {"status": "ok", "detail": "Search prompt sent"}
+                    elif any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                        await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+        
+        # Enqueue the task for background processing
         from worker.queue import enqueue_task
         task = {
             'task_type': 'telegram_update',
@@ -314,37 +333,13 @@ async def webhook_handler(request: Request):
             'chat_id': update.effective_chat.id if update.effective_chat else None
         }
         
-        # Enqueue the task without waiting for processing
         await enqueue_task(task)
-        
-        # Send immediate acknowledgment only for product URLs, not for 'Cerca prodotto'
-        if update.message and update.message.text:
-            try:
-                # Check if the message is the search product button
-                if update.message.text == "🔍 Cerca prodotto":
-                    await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
-                elif "amazon" in update.message.text.lower() or "ebay" in update.message.text.lower():
-                    await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
-            except RuntimeError as re:
-                if "Event loop is closed" in str(re):
-                    # Create a new event loop and retry
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    if update.message.text == "🔍 Cerca prodotto":
-                        await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
-                    elif "amazon" in update.message.text.lower() or "ebay" in update.message.text.lower():
-                        await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
-            except Exception as e:
-                print(f"Error sending acknowledgment: {e}")
-        
         return {"status": "ok", "detail": "Task enqueued for processing"}
     
     except Exception as e:
         print(f"Error in webhook handler: {str(e)}")
-        # Ensure client is closed on outer exceptions
         try:
             await close_http_client()
         except Exception as close_error:
             print(f"Error closing HTTP client: {close_error}")
-        # Always return success to Telegram
         return {"status": "ok", "detail": str(e)}

@@ -107,8 +107,17 @@ async def analyze_product_url(update: Update, url: str):
         # Validate URL
         validate_url(url)
         
-        # Send immediate acknowledgment
-        await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+        # Send immediate acknowledgment with event loop handling
+        try:
+            await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+        except RuntimeError as re:
+            if "Event loop is closed" in str(re):
+                # Create a new event loop and retry
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+            else:
+                raise
         
         # Call our API to analyze the product
         vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
@@ -117,21 +126,44 @@ async def analyze_product_url(update: Update, url: str):
         
         # Use the shared HTTP client with optimized connection pooling
         client = get_http_client()
-        response = await client.post(api_url, json={"url": url}, timeout=30.0)
-        response_data = await response.json()
-        
-        if response.status_code != 200:
-            error_detail = response_data.get('error', 'Unknown error')
-            raise Exception(f"API error: {response.status_code} - {error_detail}")
-        
-        # Format and send the analysis results
-        analysis_text = format_analysis_response(response_data)
-        await update.message.reply_text(analysis_text, parse_mode="Markdown")
-        return response_data
+        try:
+            response = await client.post(api_url, json={"url": url}, timeout=30.0)
+            response_data = await response.json()
+            
+            if response.status_code != 200:
+                error_detail = response_data.get('error', 'Unknown error')
+                raise Exception(f"API error: {response.status_code} - {error_detail}")
+            
+            # Format and send the analysis results
+            analysis_text = format_analysis_response(response_data)
+            try:
+                await update.message.reply_text(analysis_text, parse_mode="Markdown")
+            except RuntimeError as re:
+                if "Event loop is closed" in str(re):
+                    # Create a new event loop and retry
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    await update.message.reply_text(analysis_text, parse_mode="Markdown")
+                else:
+                    raise
+            return response_data
+        finally:
+            # Ensure HTTP client is closed properly
+            await close_http_client()
         
     except Exception as e:
         error_message = str(e)
-        await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {error_message}")
+        try:
+            await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {error_message}")
+        except RuntimeError as re:
+            if "Event loop is closed" in str(re):
+                # Create a new event loop and retry
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {error_message}")
+            else:
+                raise
+        return {"status": "error", "error": error_message}
         return {"status": "error", "error": error_message}
 
 def format_analysis_response(data: Dict[str, Any]) -> str:
