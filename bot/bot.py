@@ -15,6 +15,16 @@ class WorthItBot:
         self.setup_handlers()
     
     def setup_handlers(self):
+        # Register bot commands with Telegram servers
+        commands = [
+            ('start', 'Avvia il bot'),
+            ('analisi', 'Le tue analisi salvate'),
+            ('aiuto', 'Guida e informazioni'),
+            ('cerca', 'Cerca un prodotto'),
+            ('popolari', 'Prodotti più popolari')
+        ]
+        self.app.post_init = lambda app: app.bot.set_my_commands(commands)
+
         self.app.add_handler(CommandHandler('start', start))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     

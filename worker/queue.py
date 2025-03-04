@@ -172,13 +172,13 @@ async def enqueue_task(task):
     })
     
     # Add task to queue
-    await redis_client.lpush('tasks', json.dumps(task))
+    await redis_client.lpush('worthit_tasks', json.dumps(task))
     return task_id
 
 async def dequeue_task():
     """Dequeue a task from Redis."""
     redis_client = await get_redis_client()
-    result = await redis_client.brpop('tasks', timeout=1)
+    result = await redis_client.brpop('worthit_tasks', timeout=1)
     if result:
         _, task_json = result
         return json.loads(task_json)

@@ -6,9 +6,17 @@ import httpx
 import os
 import re
 import asyncio
+import logging
 from dotenv import load_dotenv
 from .bot import start, handle_text
 from .http_client import get_http_client, close_http_client
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 # We'll use a more stateless approach instead of a global application instance
@@ -287,16 +295,36 @@ async def webhook_handler(request: Request):
                     elif any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
                         await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
         
-        # Enqueue the task for background processing
-        from worker.queue import enqueue_task
-        task = {
-            'task_type': 'telegram_update',
-            'update_data': data,
-            'chat_id': update.effective_chat.id if update.effective_chat else None
-        }
-        
-        await enqueue_task(task)
-        return {"status": "ok", "detail": "Task enqueued for processing"}
+        # Enqueue the task for background processing with proper error handling
+        try:
+            from worker.queue import enqueue_task, get_task_queue
+            
+            # Initialize task queue first to ensure Redis connection
+            task_queue = get_task_queue()
+            await task_queue.connect()
+            
+            task = {
+                'task_type': 'telegram_update',
+                'update_data': data,
+                'chat_id': update.effective_chat.id if update.effective_chat else None,
+                'created_at': asyncio.get_event_loop().time()
+            }
+            
+            task_id = await enqueue_task(task)
+            logger.info(f"Task {task_id} enqueued successfully")
+            
+            return {"status": "ok", "detail": "Task enqueued for processing", "task_id": task_id}
+            
+        except Exception as e:
+            logger.error(f"Failed to enqueue task: {e}")
+            # Create a new event loop if needed
+            if isinstance(e, RuntimeError) and "Event loop is closed" in str(e):
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                # Retry task enqueuing once
+                task_id = await enqueue_task(task)
+                return {"status": "ok", "detail": "Task enqueued after retry", "task_id": task_id}
+            return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
     
     except Exception as e:
         print(f"Error in webhook handler: {str(e)}")
