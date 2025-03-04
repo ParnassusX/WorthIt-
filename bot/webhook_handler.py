@@ -317,16 +317,23 @@ async def webhook_handler(request: Request):
         # Enqueue the task without waiting for processing
         await enqueue_task(task)
         
-        # Send immediate acknowledgment
+        # Send immediate acknowledgment only for product URLs, not for 'Cerca prodotto'
         if update.message and update.message.text:
             try:
-                await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+                # Check if the message is the search product button
+                if update.message.text == "🔍 Cerca prodotto":
+                    await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
+                elif "amazon" in update.message.text.lower() or "ebay" in update.message.text.lower():
+                    await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
             except RuntimeError as re:
                 if "Event loop is closed" in str(re):
                     # Create a new event loop and retry
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                    await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
+                    if update.message.text == "🔍 Cerca prodotto":
+                        await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
+                    elif "amazon" in update.message.text.lower() or "ebay" in update.message.text.lower():
+                        await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
             except Exception as e:
                 print(f"Error sending acknowledgment: {e}")
         
