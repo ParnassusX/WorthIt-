@@ -39,7 +39,7 @@ async def get_redis_client():
                 socket_connect_timeout=5.0,
                 socket_keepalive=True,
                 health_check_interval=60,
-                retry_on_timeout=True,
+                # Remove retry_on_timeout as it's already in ssl_config when needed
                 **ssl_config
             )
             # Test the connection
@@ -84,7 +84,7 @@ class TaskQueue:
                     socket_connect_timeout=5.0,
                     socket_keepalive=True,
                     health_check_interval=60,
-                    retry_on_timeout=True,
+                    # Remove retry_on_timeout as it's already in ssl_config when needed
                     **ssl_config
                 )
                 # Test the connection
