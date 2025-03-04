@@ -120,6 +120,41 @@ async def analyze_product_url(update: Update, url: str):
             else:
                 raise
         
+        # Enqueue the task for background processing
+        from worker.queue import enqueue_task
+        
+        task = {
+            'task_type': 'product_analysis',
+            'url': url,
+            'status': 'pending',
+            'chat_id': update.effective_chat.id
+        }
+        
+        # Add task to Redis queue
+        try:
+            await enqueue_task(task)
+            return {"status": "processing", "message": "Task enqueued for processing"}
+        except Exception as e:
+            print(f"Failed to enqueue task: {e}")
+            # Fall back to direct API call if queueing fails
+            return await direct_api_call(update, url)
+    except Exception as e:
+        error_message = str(e)
+        try:
+            await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {error_message}")
+        except RuntimeError as re:
+            if "Event loop is closed" in str(re):
+                # Create a new event loop and retry
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {error_message}")
+            else:
+                raise
+        return {"status": "error", "error": error_message}
+
+async def direct_api_call(update: Update, url: str):
+    """Fallback method to call API directly if queueing fails."""
+    try:
         # Call our API to analyze the product
         vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
         api_host = os.getenv("API_HOST", f"https://{vercel_url}")
@@ -151,21 +186,9 @@ async def analyze_product_url(update: Update, url: str):
         finally:
             # Ensure HTTP client is closed properly
             await close_http_client()
-        
     except Exception as e:
-        error_message = str(e)
-        try:
-            await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {error_message}")
-        except RuntimeError as re:
-            if "Event loop is closed" in str(re):
-                # Create a new event loop and retry
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                await update.message.reply_text(f"Mi dispiace, non sono riuscito ad analizzare questo prodotto. Errore: {error_message}")
-            else:
-                raise
-        return {"status": "error", "error": error_message}
-        return {"status": "error", "error": error_message}
+        print(f"Direct API call failed: {e}")
+        return {"status": "error", "error": str(e)}
 
 def format_analysis_response(data: Dict[str, Any]) -> str:
     """Format the analysis response into a readable message."""

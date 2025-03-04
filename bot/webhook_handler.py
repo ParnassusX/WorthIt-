@@ -195,83 +195,43 @@ def get_bot_instance() -> Bot:
     return _bot_instance
 
 async def process_telegram_update(update: Update) -> None:
-    """Process a Telegram update without using Application instance"""
+    """Process incoming telegram updates with proper event loop handling."""
     try:
-        # Process the update with proper error handling for each step
-        if update.message:
-            if update.message.text:
-                try:
-                    if update.message.text.startswith("/start"):
-                        await start(update, None)
-                    else:
-                        await handle_text(update, None)
-                except HTTPException as http_error:
-                    error_message = "Mi dispiace, "
-                    if http_error.status_code == 401:
-                        error_message += "c'è un problema con l'autenticazione API. Riprova più tardi."
-                    elif http_error.status_code == 400:
-                        error_message += "il link del prodotto non è valido. Assicurati di usare un link di Amazon o eBay."
-                    elif http_error.status_code == 504:
-                        error_message += "l'analisi sta richiedendo troppo tempo. Riprova più tardi."
-                    elif http_error.status_code == 503:
-                        error_message += "il servizio è temporaneamente non disponibile. Riprova più tardi."
-                    else:
-                        error_message += "si è verificato un errore durante l'analisi. Riprova più tardi."
-                    
-                    try:
-                        await update.message.reply_text(error_message)
-                    except RuntimeError as re:
-                        if "Event loop is closed" in str(re):
-                            print("Ignoring closed event loop error when sending error message")
-                        else:
-                            raise
-                except RuntimeError as re:
-                    if "Event loop is closed" in str(re):
-                        print("Ignoring closed event loop error in message handler")
-                    else:
-                        raise
-                except Exception as msg_error:
-                    print(f"Error handling message: {msg_error}")
-                    try:
-                        await update.message.reply_text(
-                            "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
-                        )
-                    except RuntimeError as re:
-                        if "Event loop is closed" in str(re):
-                            print("Ignoring closed event loop error when sending error message")
-                        else:
-                            raise
-                    except Exception:
-                        pass
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Process the update
+        if update.message and update.message.text:
+            await handle_text(update, None)
         elif update.callback_query:
-            try:
-                await handle_callback_query(update, None)
-            except RuntimeError as re:
-                if "Event loop is closed" in str(re):
-                    print("Ignoring closed event loop error in callback handler")
-                else:
-                    raise
-            except Exception as cb_error:
-                print(f"Error handling callback query: {cb_error}")
+            # Handle callback queries here if needed
+            pass
     except RuntimeError as re:
         if "Event loop is closed" in str(re):
-            print("Ignoring closed event loop error in process_telegram_update")
+            # Create a new event loop and retry once
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                if update.message and update.message.text:
+                    await handle_text(update, None)
+            except Exception as retry_error:
+                print(f"Failed to process update after event loop retry: {retry_error}")
         else:
             raise
     except Exception as e:
-        print(f"Error in process_telegram_update: {str(e)}")
-        if update.message:
-            try:
+        print(f"Error processing telegram update: {e}")
+        # Notify user of error if possible
+        try:
+            if update.message:
                 await update.message.reply_text(
-                    "Mi dispiace, si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi."
+                    "Mi dispiace, si è verificato un errore. Riprova più tardi."
                 )
-            except RuntimeError as re:
-                if "Event loop is closed" in str(re):
-                    print("Ignoring closed event loop error when sending error message")
-                else:
-                    raise
-            except Exception:
-                pass
+        except Exception as notify_error:
+            print(f"Failed to notify user of error: {notify_error}")
 
 @app.get("/health")
 async def health_check():
