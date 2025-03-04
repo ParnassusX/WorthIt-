@@ -58,20 +58,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await analyze_product_url(update, url)
             else:
                 await update.message.reply_text("Non sembra un link valido. Per favore, invia un link di un prodotto valido.")
+                # Re-enable URL input mode since the input was invalid
+                user_data['awaiting_url'] = True
                 
         elif text == "🔍 Cerca prodotto":
-            # Store state in user_data if context is available
-            if context is not None:
-                user_data['awaiting_url'] = True
+            # Always set awaiting_url flag
+            user_data['awaiting_url'] = True
             
             try:
-                await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare")
+                await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare 🔗")
             except RuntimeError as re:
                 if "Event loop is closed" in str(re):
                     # Create a new event loop and retry
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                    await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare")
+                    await update.message.reply_text("Incolla il link del prodotto che vuoi analizzare 🔗")
                 else:
                     raise
         elif text == "📊 Le mie analisi":

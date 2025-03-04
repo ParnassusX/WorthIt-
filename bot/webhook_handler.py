@@ -77,8 +77,9 @@ async def analyze_product(url: str, chat_id: int = None) -> Dict[str, Any]:
             status_code=500,
             detail=f"Failed to start analysis: {str(e)}"
         )
-
-    client = get_http_client()
+    
+    # This code is unreachable due to the return statement above
+    # client = get_http_client()
     try:
         try:
             response = await asyncio.wait_for(
@@ -309,7 +310,8 @@ async def webhook_handler(request: Request):
         if update.message and update.message.text:
             try:
                 if update.message.text == "🔍 Cerca prodotto":
-                    await update.message.reply_text("Inserisci il link del prodotto che vuoi analizzare 🔗")
+                    # Process through handle_text to ensure proper state management
+                    await handle_text(update, None)
                     return {"status": "ok", "detail": "Search prompt sent"}
                 elif any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
                     await update.message.reply_text("Sto analizzando il prodotto... Attendi un momento ⏳")
