@@ -40,8 +40,7 @@ yarn-error.log*
 *.swp
 *.swo
 
-# Vercel
-.vercel/
+
 
 # Testing
 .coverage
@@ -55,3 +54,5 @@ logs/
 # System Files
 .DS_Store
 Thumbs.db
+# Local Netlify folder
+.netlify

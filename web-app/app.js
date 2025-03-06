@@ -13,8 +13,8 @@ const recommendationEl = document.getElementById('recommendation');
 const prosList = document.getElementById('pros');
 const consList = document.getElementById('cons');
 
-// API endpoint - updated to use deployed API endpoint
-const API_URL = '/api/analyze';
+// API endpoint - updated to use Netlify Functions endpoint
+const API_URL = '/.netlify/functions/analyze';
 
 // Event listeners
 analyzeBtn.addEventListener('click', analyzeProduct);
@@ -27,41 +27,150 @@ cameraBtn.addEventListener('click', () => {
     cameraInput.click();
 });
 
+// Utility function for retry logic with circuit breaker
+const retryFetch = async (url, options, maxRetries = 3, backoffMs = 1000) => {
+    let lastError;
+    const circuitBreaker = {
+        failures: 0,
+        lastFailure: null,
+        threshold: 5,
+        resetTimeout: 30000
+    };
+    
+    // Check circuit breaker
+    if (circuitBreaker.failures >= circuitBreaker.threshold) {
+        if (Date.now() - circuitBreaker.lastFailure < circuitBreaker.resetTimeout) {
+            throw new Error('Circuit breaker is open');
+        }
+        // Reset circuit breaker
+        circuitBreaker.failures = 0;
+    }
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            // Reset circuit breaker on success
+            circuitBreaker.failures = 0;
+            return response;
+        } catch (error) {
+            lastError = error;
+            circuitBreaker.failures++;
+            circuitBreaker.lastFailure = Date.now();
+            errorTracker.track(error, { url, attempt });
+            
+            if (attempt < maxRetries - 1) {
+                const backoff = backoffMs * Math.pow(2, attempt);
+                await new Promise(resolve => setTimeout(resolve, backoff));
+            }
+        }
+    }
+    throw lastError;
+};
+
+// Error tracking utility
+const errorTracker = {
+    errors: [],
+    maxErrors: 50,
+    track(error, context = {}) {
+        const errorInfo = {
+            timestamp: new Date().toISOString(),
+            error: error.message,
+            stack: error.stack,
+            context
+        };
+        this.errors.push(errorInfo);
+        if (this.errors.length > this.maxErrors) {
+            this.errors.shift();
+        }
+        // Send error to monitoring service
+        this.reportError(errorInfo);
+    },
+    async reportError(errorInfo) {
+        try {
+            await fetch('/.netlify/functions/log-error', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(errorInfo)
+            });
+        } catch (e) {
+            console.error('Failed to report error:', e);
+        }
+    }
+};
+
+// Enhanced error handling
+const handleError = (error) => {
+    errorTracker.track(error);
+    let userMessage = 'Si è verificato un errore. Riprova più tardi.';
+    
+    if (error.message.includes('Circuit breaker is open')) {
+        userMessage = 'Il servizio è temporaneamente non disponibile. Riprova tra qualche minuto.';
+    } else if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
+        userMessage = 'Errore di connessione. Verifica la tua connessione internet e riprova.';
+    } else if (error.message.includes('HTTP error! status: 429')) {
+        userMessage = 'Troppe richieste. Attendi qualche minuto e riprova.';
+    } else if (error.message.includes('HTTP error! status: 4')) {
+        userMessage = 'Errore nella richiesta. Verifica l\'URL del prodotto e riprova.';
+    } else if (error.message.includes('HTTP error! status: 5')) {
+        userMessage = 'Il servizio non è al momento disponibile. Riprova più tardi.';
+    }
+    
+    // Show error in UI
+    const errorEl = document.getElementById('error-message');
+    if (errorEl) {
+        errorEl.textContent = userMessage;
+        errorEl.style.display = 'block';
+        setTimeout(() => {
+            errorEl.style.display = 'none';
+        }, 5000);
+    } else {
+        alert(userMessage);
+    }
+};
+
+// Update loading state management
+const setLoadingState = (isLoading) => {
+    if (isLoading) {
+        resultEl.style.display = 'none';
+        loadingDiv.style.display = 'block';
+        analyzeBtn.disabled = true;
+        productUrlInput.disabled = true;
+    } else {
+        loadingDiv.style.display = 'none';
+        analyzeBtn.disabled = false;
+        productUrlInput.disabled = false;
+    }
+};
+
+// Update camera input handler
 cameraInput.addEventListener('change', async (event) => {
     if (event.target.files && event.target.files[0]) {
         const file = event.target.files[0];
-        
-        // Show loading state
-        resultEl.style.display = 'none';
-        loadingDiv.style.display = 'block';
+        setLoadingState(true);
         
         try {
-            // Create FormData to send the image
             const formData = new FormData();
             formData.append('image', file);
             
-            // Call the API endpoint for image processing
-            const response = await fetch('/api/analyze-image', {
+            const response = await retryFetch('/.netlify/functions/analyze-image', {
                 method: 'POST',
                 body: formData
             });
             
-            if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
-            }
-            
             const data = await response.json();
             displayResults(data);
         } catch (error) {
-            console.error('Error processing image:', error);
-            alert('Si è verificato un errore durante l\'elaborazione dell\'immagine. Riprova più tardi.');
+            handleError(error);
         } finally {
-            loadingDiv.style.display = 'none';
+            setLoadingState(false);
         }
     }
 });
 
-// Main function to analyze product
+// Update main analyze function
 async function analyzeProduct() {
     const productUrl = productUrlInput.value.trim();
     
@@ -70,29 +179,19 @@ async function analyzeProduct() {
         return;
     }
     
-    // Show loading state
-    resultEl.style.display = 'none';
-    loadingDiv.style.display = 'block';
+    setLoadingState(true);
     
     try {
-        // Call the API
-        const response = await fetch(`${API_URL}?url=${encodeURIComponent(productUrl)}`, {
+        const response = await retryFetch(`${API_URL}?url=${encodeURIComponent(productUrl)}`, {
             method: 'POST'
         });
         
-        if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
-        }
-        
         const data = await response.json();
-        
-        // Display results
         displayResults(data);
     } catch (error) {
-        console.error('Error analyzing product:', error);
-        alert('Si è verificato un errore durante l\'analisi del prodotto. Riprova più tardi.');
+        handleError(error);
     } finally {
-        loadingDiv.style.display = 'none';
+        setLoadingState(false);
     }
 }
 

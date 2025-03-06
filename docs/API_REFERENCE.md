@@ -6,9 +6,9 @@ This document provides detailed information about the WorthIt! API endpoints, th
 ## Base URL
 The API is hosted on Vercel. The base URL is:
 ```
-https://{VERCEL_URL}/api
+https://worthit-py.netlify.app/api
 ```
-Where `{VERCEL_URL}` is your Vercel deployment URL or custom domain.
+This is the base URL for the WorthIt! API endpoints.
 
 ## Authentication
 The API requires two authentication tokens:

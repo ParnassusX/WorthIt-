@@ -7,9 +7,34 @@ from api.errors import register_exception_handlers
 from api.health import router as health_router
 from api.ml_processor import analyze_reviews, extract_product_pros_cons, get_value_score
 from api.routes import router as api_router
+from api.monitoring import setup_metrics
+from api.validation import validation_middleware
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# Circuit breaker configuration
+from fastapi_circuit_breaker import CircuitBreaker, CircuitBreakerState
+from datetime import timedelta
+
+# Define circuit breaker settings
+SENTIMENT_BREAKER = CircuitBreaker(
+    failure_threshold=5,
+    recovery_timeout=timedelta(minutes=5),
+    state_storage=CircuitBreakerState()
+)
+
+TEXT_GEN_BREAKER = CircuitBreaker(
+    failure_threshold=5,
+    recovery_timeout=timedelta(minutes=5),
+    state_storage=CircuitBreakerState()
+)
+
+SCRAPER_BREAKER = CircuitBreaker(
+    failure_threshold=3,
+    recovery_timeout=timedelta(minutes=10),
+    state_storage=CircuitBreakerState()
+)
 
 app = FastAPI(title="WorthIt! API", version="1.0.0")
 
@@ -22,6 +47,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Setup monitoring
+setup_metrics(app)
+
+# Add validation middleware
+app.middleware("http")(validation_middleware)
 
 # Register error handlers
 register_exception_handlers(app)
@@ -43,41 +74,94 @@ app.include_router(api_router)
 SENTIMENT_API_URL = "https://api-inference.huggingface.co/models/nlptown/bert-base-multilingual-uncased-sentiment"
 TEXT_GENERATION_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
 
-# Hugging Face API functions
+# Hugging Face API functions with enhanced error handling and monitoring
 async def analyze_sentiment(text):
-    """Use Hugging Face API for sentiment analysis with free tier handling"""
+    """Use Hugging Face API for sentiment analysis with circuit breaker and resilience"""
+    if SENTIMENT_BREAKER.is_open:
+        logger.warning("Sentiment analysis circuit breaker is open, using fallback")
+        return {"label": "3 stars", "score": 0.5}
+        
     hf_token = os.getenv("HF_TOKEN")
     if not hf_token:
         logger.warning("No Hugging Face token found. Using fallback sentiment analysis.")
         return {"label": "3 stars", "score": 0.5}
     
     headers = {"Authorization": f"Bearer {hf_token}"}
-    payload = {"inputs": text[:500]}  # Limit input size for free tier
+    # Enhanced input validation and size limiting
+    cleaned_text = text.strip()[:500]  # Limit input size for free tier
+    if not cleaned_text:
+        logger.warning("Empty text provided for sentiment analysis")
+        return {"label": "3 stars", "score": 0.5}
+    
+    payload = {"inputs": cleaned_text}
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                SENTIMENT_API_URL,
-                headers=headers,
-                json=payload,
-                timeout=5.0  # Shorter timeout for free tier
-            )
-            response.raise_for_status()
-            return response.json()[0]
+            # Add retry logic with exponential backoff
+            for attempt in range(3):
+                try:
+                    response = await client.post(
+                        SENTIMENT_API_URL,
+                        headers=headers,
+                        json=payload,
+                        timeout=5.0  # Shorter timeout for free tier
+                    )
+                    response.raise_for_status()
+                    result = response.json()[0]
+                    
+                    # Log successful API call
+                    logger.info(
+                        "Sentiment analysis successful",
+                        extra={
+                            "text_length": len(cleaned_text),
+                            "attempt": attempt + 1,
+                            "status_code": response.status_code
+                        }
+                    )
+                    return result
+                except httpx.TimeoutError:
+                    if attempt == 2:  # Last attempt
+                        raise
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 429:  # Rate limit
+                        logger.warning("Rate limit hit for sentiment analysis")
+                        if attempt == 2:  # Last attempt
+                            return {"label": "3 stars", "score": 0.5}
+                        await asyncio.sleep(2 ** attempt)
+                    else:
+                        raise
     except Exception as e:
-        logger.error(f"Sentiment analysis API error: {e}")
+        logger.error(
+            "Sentiment analysis API error",
+            extra={
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+                "text_length": len(cleaned_text)
+            }
+        )
         return {"label": "3 stars", "score": 0.5}  # Fallback
 
 async def generate_pros_cons(prompt):
-    """Use Hugging Face API for text generation with free tier handling"""
+    """Use Hugging Face API for text generation with circuit breaker and resilience"""
+    if TEXT_GEN_BREAKER.is_open:
+        logger.warning("Text generation circuit breaker is open, using fallback")
+        return {"generated_text": "Pros:\n- Quality product\n- Good value\n\nCons:\n- Could be improved\n- Limited features"}
+        
     hf_token = os.getenv("HF_TOKEN")
     if not hf_token:
         logger.warning("No Hugging Face token found. Using fallback pros/cons generation.")
         return {"generated_text": "Pros:\n- Quality product\n- Good value\n\nCons:\n- Could be improved\n- Limited features"}
     
     headers = {"Authorization": f"Bearer {hf_token}"}
+    # Enhanced input validation and size limiting
+    cleaned_prompt = prompt.strip()[:1000]  # Limit input size for free tier
+    if not cleaned_prompt:
+        logger.warning("Empty prompt provided for text generation")
+        return {"generated_text": "Pros:\n- Quality product\n- Good value\n\nCons:\n- Could be improved\n- Limited features"}
+    
     payload = {
-        "inputs": prompt[:1000],  # Limit input size for free tier
+        "inputs": cleaned_prompt,
         "parameters": {
             "max_length": 300,  # Reduced length for free tier
             "return_full_text": False,
@@ -88,20 +172,58 @@ async def generate_pros_cons(prompt):
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                TEXT_GENERATION_API_URL,
-                headers=headers,
-                json=payload,
-                timeout=10.0  # Adjusted timeout for free tier
-            )
-            response.raise_for_status()
-            return {"generated_text": response.json()[0]["generated_text"]}
+            # Add retry logic with exponential backoff
+            for attempt in range(3):
+                try:
+                    response = await client.post(
+                        TEXT_GENERATION_API_URL,
+                        headers=headers,
+                        json=payload,
+                        timeout=10.0  # Adjusted timeout for free tier
+                    )
+                    response.raise_for_status()
+                    result = response.json()[0]["generated_text"]
+                    
+                    # Log successful API call
+                    logger.info(
+                        "Text generation successful",
+                        extra={
+                            "prompt_length": len(cleaned_prompt),
+                            "attempt": attempt + 1,
+                            "status_code": response.status_code,
+                            "response_length": len(result)
+                        }
+                    )
+                    return {"generated_text": result}
+                except httpx.TimeoutError:
+                    if attempt == 2:  # Last attempt
+                        raise
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 429:  # Rate limit
+                        logger.warning("Rate limit hit for text generation")
+                        if attempt == 2:  # Last attempt
+                            return {"generated_text": "Pros:\n- Quality product\n- Good value\n\nCons:\n- Could be improved\n- Limited features"}
+                        await asyncio.sleep(2 ** attempt)
+                    else:
+                        raise
     except Exception as e:
-        logger.error(f"Text generation API error: {e}")
+        logger.error(
+            "Text generation API error",
+            extra={
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+                "prompt_length": len(cleaned_prompt)
+            }
+        )
         return {"generated_text": "Pros:\n- Quality product\n- Good value\n\nCons:\n- Could be improved\n- Limited features"}  # Fallback
 
 # Scraping function using Apify
 async def scrape_product(url):
+    if SCRAPER_BREAKER.is_open:
+        logger.error("Scraper circuit breaker is open")
+        raise HTTPException(status_code=503, detail="Scraping service temporarily unavailable")
+        
     apify_token = os.getenv("APIFY_TOKEN")
     if not apify_token:
         logger.error("Missing Apify token. Set APIFY_TOKEN environment variable.")
@@ -120,7 +242,7 @@ async def scrape_product(url):
                         async function pageFunction(context) {
                             const { $, request } = context;
                             
-                            // Common selectors for major e-commerce sites
+                            # Common selectors for major e-commerce sites
                             const selectors = {
                                 amazon: {
                                     title: '#productTitle, #title',
@@ -142,7 +264,7 @@ async def scrape_product(url):
                                 }
                             };
                             
-                            // Determine site type from URL
+                            # Determine site type from URL
                             let site = 'default';
                             if (request.url.includes('amazon')) site = 'amazon';
                             if (request.url.includes('ebay')) site = 'ebay';
@@ -335,6 +457,47 @@ async def analyze_product(url: str):
     except Exception as e:
         logger.error(f"Unexpected error in analyze_product: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+@app.get("/")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "online", "service": "WorthIt! API"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+# Import service mesh
+from api.service_mesh import ServiceMesh
+from worker.redis_manager import RedisConnectionManager
+
+# Initialize service mesh
+async def setup_service_mesh():
+    redis_manager = RedisConnectionManager()
+    redis_client = await redis_manager.get_client()
+    service_mesh = ServiceMesh(app, redis_client)
+    return service_mesh
+
+# Create service mesh instance
+service_mesh = None
+
+@app.on_event("startup")
+async def startup_event():
+    global service_mesh
+    service_mesh = await setup_service_mesh()
+    # Register this service
+    await service_mesh.register_service(
+        "api",
+        os.getenv("HOST", "localhost"),
+        int(os.getenv("PORT", 8000)),
+        "/health"
+    )
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    if service_mesh:
+        await service_mesh.deregister_service("api", f"api_{os.getenv('HOST', 'localhost')}_{os.getenv('PORT', '8000')}")
+
 @app.get("/")
 async def health_check():
     """Health check endpoint"""

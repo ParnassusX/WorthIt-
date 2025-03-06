@@ -8,8 +8,7 @@ def activate_webhook():
     if not token:
         raise ValueError("TELEGRAM_TOKEN environment variable is not set")
     
-    vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
-    webhook_url = f"https://{vercel_url}/webhook"
+    webhook_url = os.getenv("WEBHOOK_URL", "https://worthit-py.netlify.app/webhook")
     
     # Telegram API endpoint for setting webhook
     api_url = f"https://api.telegram.org/bot{token}/setWebhook"

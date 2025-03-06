@@ -64,14 +64,7 @@ For more details, see the [Testing Structure](docs/TESTING_STRUCTURE.md) documen
 3. Run the API: `uvicorn api.main:app --reload`
 4. For testing the bot locally, use a tool like ngrok to expose your local server
 
-### Vercel Deployment
 
-The app is configured for Vercel deployment using the `vercel.json` configuration file.
-
-1. Install Vercel CLI: `npm i -g vercel`
-2. Deploy: `vercel`
-3. Set environment variables in the Vercel dashboard
-4. After deployment, run the webhook setup script: `python scripts/deploy_vercel.py`
 
 ## Features
 

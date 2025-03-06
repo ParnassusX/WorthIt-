@@ -29,8 +29,8 @@ REDIS_URL=redis://default:A13fhd8gzadebwqq9cqaxkhrx7cxlhehhfjdct3ep62mgjqpfi2@re
 RENDER_API_KEY=rnd_oW3VZXHpUJPzn6KLrzmgw9BJvyTt
 
 # Deployment
-VERCEL_URL=your_vercel_url
-API_HOST=https://your_api_host
+WEBHOOK_URL=https://worthit.netlify.app/webhook
+API_HOST=https://worthit.netlify.app/api
 ```
 
 ## Installation
@@ -69,16 +69,7 @@ python -m worker.worker
 ```
 3. The worker will connect to Redis Cloud and process tasks asynchronously
 
-### Vercel Deployment
-1. Install Vercel CLI:
-```bash
-npm i -g vercel
-```
 
-2. Deploy to Vercel:
-```bash
-python scripts/deploy_vercel.py
-```
 
 ## Running Locally
 1. Start the API server:

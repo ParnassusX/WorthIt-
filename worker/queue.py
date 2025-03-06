@@ -9,112 +9,124 @@ from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 
 logger = logging.getLogger(__name__)
 
-# Redis connection pool
-_redis_client = None
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-async def get_redis_client():
-    """Get a Redis client instance with retry logic and connection pooling."""
-    global _redis_client
-    if _redis_client is None or not await check_redis_connection(_redis_client):
-        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-        # Use SSL for Upstash Redis
-        if "upstash" in redis_url and not redis_url.startswith("rediss://"):
-            redis_url = redis_url.replace("redis://", "rediss://")
-        
-        try:
-            # Enhanced SSL configuration for Upstash Redis
-            ssl_enabled = "upstash" in redis_url
-            ssl_config = {
-                "ssl_cert_reqs": None,
-                "ssl_check_hostname": False,
-                "retry_on_timeout": True,
-                "max_connections": 20,  # Increased pool size
-                "max_idle_time": 300,  # 5 minutes idle timeout
-                "retry_on_error": [TimeoutError, ConnectionError],
-                "health_check_interval": 30  # More frequent health checks
-            } if ssl_enabled else {
-                "retry_on_timeout": True,
-                "max_connections": 20,
-                "max_idle_time": 300
-            }
-            
-            _redis_client = await Redis.from_url(
-                redis_url,
-                decode_responses=False,
-                socket_timeout=5.0,
-                socket_connect_timeout=5.0,
-                socket_keepalive=True,
-                **ssl_config
-            )
-            # Verify connection
-            if not await check_redis_connection(_redis_client):
-                raise ConnectionError("Failed to establish Redis connection")
-            
-            logger.info("Successfully established Redis connection")
-            return _redis_client
-            
-        except Exception as e:
-            logger.error(f"Redis connection error: {e}")
-            _redis_client = None
-            raise
-    return _redis_client
-
-async def check_redis_connection(client: Redis) -> bool:
-    """Check if Redis connection is alive and healthy."""
-    try:
-        if client is None:
-            return False
-        await client.ping()
-        return True
-    except Exception as e:
-        logger.error(f"Redis connection check failed: {e}")
-        return False
+from .redis_manager import get_redis_client, get_redis_manager
 
 class TaskQueue:
     def __init__(self):
         self.redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
         self.queue_name = 'worthit_tasks'
         self.redis = None
-        self.max_retries = 3  # Limit retries for free tier
-        self.retry_delay = 2  # Initial delay in seconds
+        self.max_retries = 3
+        self.retry_delay = 2
+        self._cleanup_task = None
+        self._is_shutting_down = False
+        self._connection_pool = None
+        self._health_check_task = None
+        self._last_health_check = 0
+        self._connection_errors = 0
     
+    async def _cleanup_stale_connections(self):
+        """Periodically cleanup stale connections with improved error handling"""
+        while not self._is_shutting_down:
+            try:
+                if self._connection_pool:
+                    await self._connection_pool.disconnect(inuse_connections=True)
+                    self._connection_errors = 0  # Reset error count after successful cleanup
+                await asyncio.sleep(300)  # Run every 5 minutes
+            except Exception as e:
+                logger.error(f"Error during connection cleanup: {e}")
+                self._connection_errors += 1
+                if self._connection_errors > 3:
+                    logger.critical("Multiple connection cleanup failures detected")
+                await asyncio.sleep(60)  # Wait before retrying
+    
+    async def _health_check(self):
+        """Periodic health check for Redis connection"""
+        while not self._is_shutting_down:
+            try:
+                if self.redis:
+                    await self.redis.ping()
+                    self._last_health_check = asyncio.get_event_loop().time()
+                    self._connection_errors = 0
+                await asyncio.sleep(30)  # Check every 30 seconds
+            except Exception as e:
+                logger.error(f"Health check failed: {e}")
+                self._connection_errors += 1
+                if self._connection_errors > 3:
+                    logger.critical("Multiple health check failures detected")
+                    await self.connect()  # Force reconnection
+                await asyncio.sleep(5)  # Short delay before retry
+
     async def connect(self):
-        """Connect to Redis asynchronously"""
+        """Connect to Redis with enhanced connection pooling"""
         if self.redis is None:
             try:
-                # Use SSL for Upstash Redis
                 if "upstash" in self.redis_url and not self.redis_url.startswith("rediss://"):
                     self.redis_url = self.redis_url.replace("redis://", "rediss://")
                 
-                # Set SSL configuration for Upstash Redis
                 ssl_enabled = "upstash" in self.redis_url
-                ssl_config = {
-                    "ssl_cert_reqs": None,  # Don't verify SSL certificate
-                    "ssl_check_hostname": False,  # Don't verify hostname
+                pool_settings = {
+                    "max_connections": 20,
+                    "max_idle_time": 300,
                     "retry_on_timeout": True,
-                    "max_connections": 10
-                } if ssl_enabled else {}
+                    "health_check_interval": 30
+                }
                 
-                self.redis = await Redis.from_url(
+                if ssl_enabled:
+                    pool_settings.update({
+                        "ssl_cert_reqs": None,
+                        "ssl_check_hostname": False,
+                        "retry_on_error": [TimeoutError, ConnectionError]
+                    })
+                
+                self._connection_pool = await Redis.from_url(
                     self.redis_url,
                     decode_responses=False,
                     socket_timeout=5.0,
                     socket_connect_timeout=5.0,
                     socket_keepalive=True,
-                    health_check_interval=60,
-                    # Remove retry_on_timeout as it's already in ssl_config when needed
-                    **ssl_config
+                    **pool_settings
                 )
-                # Test the connection
+                
+                self.redis = self._connection_pool
                 await self.redis.ping()
-                logger.info("Successfully connected to Redis")
+                
+                # Start connection cleanup and health check tasks
+                if not self._cleanup_task:
+                    self._cleanup_task = asyncio.create_task(self._cleanup_stale_connections())
+                if not self._health_check_task:
+                    self._health_check_task = asyncio.create_task(self._health_check())
+                
+                logger.info("Successfully connected to Redis with connection pooling")
             except Exception as e:
                 logger.error(f"Redis connection error: {e}")
                 self.redis = None
                 raise
         return self.redis
     
+    async def shutdown(self):
+        """Gracefully shutdown Redis connections"""
+        self._is_shutting_down = True
+        
+        # Cancel cleanup and health check tasks
+        for task in [self._cleanup_task, self._health_check_task]:
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        
+        if self._connection_pool:
+            await self._connection_pool.disconnect(inuse_connections=True)
+            self._connection_pool = None
+        self.redis = None
+    
+    def __del__(self):
+        """Ensure cleanup when object is destroyed"""
+        if hasattr(self, '_cleanup_task') and self._cleanup_task:
+            asyncio.create_task(self.shutdown())
+
     def __del__(self):
         """Cleanup connections when object is destroyed"""
         if hasattr(self, 'redis') and self.redis:

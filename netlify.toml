@@ -1,0 +1,35 @@
+[build]
+command = "pip install -r requirements.txt"
+publish = "web-app"
+functions = "netlify/functions"
+
+[build.environment]
+PYTHON_VERSION = "3.9"
+
+[[redirects]]
+from = "/api/*"
+to = "/.netlify/functions/:splat"
+status = 200
+
+[[redirects]]
+from = "/webhook"
+to = "/.netlify/functions/webhook"
+status = 200
+
+[[redirects]]
+from = "/worker/static/*"
+to = "/worker/static/:splat"
+status = 200
+
+[functions]
+directory = "netlify/functions"
+node_bundler = "esbuild"
+external_node_modules = ["python-telegram-bot"]
+
+[dev]
+framework = "#custom"
+command = "python -m uvicorn api.main:app --reload"
+targetPort = 8000
+
+[functions.webhook]
+included_files = ["bot/**", "worker/**", "api/**"]

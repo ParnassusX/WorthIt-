@@ -5,21 +5,95 @@ from typing import Dict, Any
 from telegram import Bot, Update
 from .queue import get_redis_client, get_task_by_id
 from bot.bot import get_bot_instance, analyze_product_url, format_analysis_response
+from .monitoring import update_task_status, log_task_lifecycle, track_component_latency, track_task_metrics
 
 logger = logging.getLogger(__name__)
 
 async def process_task(task_id: str, task_data: Dict[str, Any]) -> None:
     """Process a task from the queue based on its type."""
+    start_time = time.time()
+    process = psutil.Process()
+    initial_memory = process.memory_info().rss
+
     try:
+        await update_task_status(task_id, 'processing', {'stage': 'initializing'})
+        await log_task_lifecycle(task_id, 'processing_started', {
+            'data': task_data,
+            'memory_usage': initial_memory,
+            'timestamp': start_time
+        })
+        
         task_type = task_data.get('task_type')
+        await update_task_status(task_id, 'processing', {
+            'stage': 'task_type_determined',
+            'type': task_type,
+            'processing_time': time.time() - start_time
+        })
+
         if task_type == 'telegram_update':
             await process_telegram_update_task(task_data)
         elif task_type == 'product_analysis':
             await process_product_analysis_task(task_data)
         else:
-            logger.error(f"Unknown task type: {task_type}")
+            logger.error(f"Unknown task type: {task_type}", extra={
+                'context': json.dumps({
+                    'task_id': task_id,
+                    'task_data': task_data,
+                    'error_type': 'unknown_task_type'
+                })
+            })
+            raise ValueError(f"Unknown task type: {task_type}")
+
+        # Track task completion metrics
+        processing_time = time.time() - start_time
+        final_memory = process.memory_info().rss
+        memory_usage = final_memory - initial_memory
+
+        await track_task_metrics(
+            task_type=task_type,
+            duration=processing_time,
+            memory_usage=memory_usage,
+            status='completed'
+        )
+
+        await update_task_status(task_id, 'completed', {
+            'processing_time': processing_time,
+            'memory_usage': memory_usage
+        })
+
     except Exception as e:
-        logger.error(f"Error processing task {task_id}: {e}")
+        processing_time = time.time() - start_time
+        final_memory = process.memory_info().rss
+        memory_usage = final_memory - initial_memory
+
+        error_context = {
+            'task_id': task_id,
+            'task_type': task_data.get('task_type'),
+            'error_type': type(e).__name__,
+            'error_message': str(e),
+            'processing_time': processing_time,
+            'memory_usage': memory_usage,
+            'stack_trace': str(e.__traceback__)
+        }
+
+        logger.error(
+            f"Error processing task {task_id}: {e}",
+            extra={'context': json.dumps(error_context)},
+            exc_info=True
+        )
+
+        await track_task_metrics(
+            task_type=task_data.get('task_type', 'unknown'),
+            duration=processing_time,
+            memory_usage=memory_usage,
+            status='failed'
+        )
+
+        await update_task_status(task_id, 'failed', error_context)
+        await log_task_lifecycle(task_id, 'processing_failed', {
+            'error': str(e),
+            'task_data': task_data
+        })
         # Update task status to failed
         redis_client = await get_redis_client()
         task = await get_task_by_id(task_id)

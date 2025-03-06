@@ -225,9 +225,8 @@ async def direct_api_call(update: Update, url: str):
     """Fallback method to call API directly if queueing fails."""
     try:
         # Call our API to analyze the product
-        vercel_url = os.getenv("VERCEL_URL", "worth-it-bot-git-main-parnassusxs-projects.vercel.app")
-        api_host = os.getenv("API_HOST", f"https://{vercel_url}")
-        api_url = f"{api_host}/api/analyze"
+        api_host = os.getenv("API_HOST", "https://worthit-py.netlify.app/api")
+        api_url = f"{api_host}/analyze"
         
         # Use the shared HTTP client with optimized connection pooling
         client = get_http_client()

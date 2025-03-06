@@ -1,0 +1,1 @@
+# Create Python virtual environment\nif (-Not (Test-Path -Path .\venv)) {\n    python -m venv venv\n}\n\n# Install requirements\n.\venv\Scripts\activate\npip install -r requirements.txt\n\n# Create log directory\nNew-Item -ItemType Directory -Force -Path .\logs\n
