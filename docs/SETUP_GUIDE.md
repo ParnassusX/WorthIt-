@@ -22,8 +22,9 @@ WEBHOOK_URL=your_webhook_url
 APIFY_TOKEN=your_apify_token
 HF_TOKEN=your_huggingface_token
 
-# Redis Cloud Configuration
-REDIS_URL=redis://default:A13fhd8gzadebwqq9cqaxkhrx7cxlhehhfjdct3ep62mgjqpfi2@redis-18843.c1.us-east1-2.gce.cloud.redislabs.com:18843
+# Redis Configuration
+# For production: Use Upstash Redis URL with rediss:// protocol
+REDIS_URL=rediss://default:your_password@your-database.upstash.io:6379
 
 # Render.com API Configuration
 RENDER_API_KEY=rnd_oW3VZXHpUJPzn6KLrzmgw9BJvyTt
@@ -61,13 +62,14 @@ npm install
 python scripts/activate_webhook.py
 ```
 
-### Redis Cloud Setup
-1. The Redis Cloud connection is already configured with the provided URL in your .env file
+### Upstash Redis Setup
+1. The Upstash Redis connection is already configured with the provided URL in your .env file
 2. To start the background worker for processing tasks:
 ```bash
 python -m worker.worker
 ```
-3. The worker will connect to Redis Cloud and process tasks asynchronously
+3. The worker will connect to Upstash Redis and process tasks asynchronously
+4. For more details, see our [Upstash Setup Guide](UPSTASH_SETUP.md)
 
 
 

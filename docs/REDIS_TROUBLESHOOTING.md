@@ -112,9 +112,9 @@ python tools/redis_diagnostics.py
 python -m tools.service_tester --redis
 ```
 
-## Vercel and Redis Compatibility
+## Netlify and Redis Compatibility
 
-Vercel serverless functions have limitations that affect Redis connectivity:
+Netlify serverless functions have limitations that affect Redis connectivity:
 
 1. **Execution timeout**: 10 seconds maximum
 2. **Cold starts**: Each function invocation may need to establish a new connection
@@ -135,7 +135,7 @@ Render web services are better suited for maintaining Redis connections:
 
 We've recently migrated from Redis Cloud to Upstash Redis for better serverless compatibility. Key benefits include:
 
-1. **Serverless-friendly**: Designed to work with Vercel and other serverless platforms
+1. **Serverless-friendly**: Designed to work with Netlify and other serverless platforms
 2. **Global replication**: Lower latency across different regions
 3. **Simplified management**: No need to manage connection pools
 4. **REST API option**: Can use HTTP requests instead of TCP connections
@@ -144,9 +144,9 @@ We've recently migrated from Redis Cloud to Upstash Redis for better serverless 
 
 Our current architecture separates concerns:
 
-1. **API (Vercel)**: Handles HTTP requests, uses Redis for caching and job queuing
+1. **API (Netlify)**: Handles HTTP requests, uses Redis for caching and job queuing
 2. **Worker (Render)**: Processes background jobs from Redis queues
-3. **Web App (Vercel)**: Serves the frontend application
+3. **Web App (Netlify)**: Serves the frontend application
 
 This separation allows us to optimize each component for its specific requirements while maintaining a cohesive system.
 

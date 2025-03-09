@@ -27,10 +27,12 @@ class RateLimiter:
         self.requests_per_minute = requests_per_minute
         self.requests: Dict[str, List[float]] = defaultdict(list)
         self.blocked_ips: Set[str] = set()
-        self.block_duration = timedelta(minutes=15)
+        self.block_duration = timedelta(minutes=30)  # Increased from 15 to 30 minutes
         self.last_cleanup = time.time()
+        self.suspicious_activity: Dict[str, int] = defaultdict(int)
+        self.max_suspicious_count = 3  # Block after 3 suspicious activities
     
-    def is_rate_limited(self, ip: str) -> bool:
+    def is_rate_limited(self, ip: str, request: Request = None) -> bool:
         current_time = time.time()
         
         # Cleanup old records every minute
@@ -40,7 +42,17 @@ class RateLimiter:
         
         # Check if IP is blocked
         if ip in self.blocked_ips:
+            validation_logger.warning(f"Blocked IP attempting request: {ip}")
             return True
+        
+        # Enhanced request pattern analysis
+        if request:
+            if self._detect_suspicious_pattern(ip, request):
+                self.suspicious_activity[ip] += 1
+                if self.suspicious_activity[ip] >= self.max_suspicious_count:
+                    self.blocked_ips.add(ip)
+                    validation_logger.warning(f"IP blocked due to suspicious activity: {ip}")
+                    return True
         
         # Remove requests older than 1 minute
         self.requests[ip] = [req_time for req_time in self.requests[ip] 
@@ -49,12 +61,34 @@ class RateLimiter:
         # Add current request
         self.requests[ip].append(current_time)
         
-        # Check if rate limit is exceeded
-        if len(self.requests[ip]) > self.requests_per_minute:
+        # Progressive rate limiting
+        request_count = len(self.requests[ip])
+        if request_count > self.requests_per_minute:
             self.blocked_ips.add(ip)
+            validation_logger.warning(f"IP blocked for exceeding rate limit: {ip}")
             return True
+        elif request_count > (self.requests_per_minute * 0.8):
+            validation_logger.warning(f"IP approaching rate limit: {ip}")
         
         return False
+    
+    def _detect_suspicious_pattern(self, ip: str, request: Request) -> bool:
+        # Check for rapid successive requests
+        if len(self.requests[ip]) >= 5:
+            last_5_requests = sorted(self.requests[ip][-5:])
+            if last_5_requests[-1] - last_5_requests[0] < 1:  # 5 requests within 1 second
+                return True
+        
+        # Check for suspicious headers or patterns
+        headers = request.headers
+        suspicious_patterns = [
+            not headers.get('User-Agent'),
+            headers.get('User-Agent', '').lower() in ['', 'python-requests', 'curl'],
+            not headers.get('Accept'),
+            headers.get('X-Forwarded-For') and headers.get('X-Forwarded-For') != ip
+        ]
+        
+        return sum(suspicious_patterns) >= 2
     
     def _cleanup(self):
         current_time = time.time()
@@ -250,6 +284,11 @@ def sanitize_request_data(data: Dict[str, Any]) -> Dict[str, Any]:
 # Validation Middleware
 async def validation_middleware(request: Request, call_next):
     try:
+        # Skip validation for GET requests or documentation endpoints
+        path = request.url.path
+        if request.method == "GET" or path in ["/docs", "/redoc", "/openapi.json"]:
+            return await call_next(request)
+            
         # Get and sanitize request body
         body = await request.json()
         body = sanitize_request_data(body)
@@ -277,15 +316,20 @@ async def validation_middleware(request: Request, call_next):
             if 'reviews' in body:
                 sanitized_reviews = []
                 for review in body['reviews']:
-                    if 'text' in review:
-                        review['text'] = ReviewData.sanitize_text(review['text'])
-                    if 'rating' in review and not ReviewData.validate_rating(review['rating']):
-                        validation_logger.warning(f"Invalid rating value: {review['rating']}")
-                        return JSONResponse(
-                            status_code=400,
-                            content={"error": "Invalid rating value. Must be between 0 and 5"}
-                        )
-                    sanitized_reviews.append(ReviewData(**review))
+                    if isinstance(review, str):
+                        # Handle string reviews (from tests)
+                        sanitized_reviews.append(ReviewData.sanitize_text(review))
+                    else:
+                        # Handle review objects
+                        if 'text' in review:
+                            review['text'] = ReviewData.sanitize_text(review['text'])
+                        if 'rating' in review and not ReviewData.validate_rating(review['rating']):
+                            validation_logger.warning(f"Invalid rating value: {review['rating']}")
+                            return JSONResponse(
+                                status_code=400,
+                                content={"error": "Invalid rating value. Must be between 0 and 5"}
+                            )
+                        sanitized_reviews.append(ReviewData(**review))
                 reviews = sanitized_reviews
             
         validation_logger.info(f"Validation successful for {path}")

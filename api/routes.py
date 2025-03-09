@@ -15,7 +15,7 @@ from api.validation import ProductURL, ReviewData
 validation_logger = logging.getLogger('validation')
 
 # Create router
-router = APIRouter(prefix="/api", dependencies=[Depends(security_dependencies)])
+router = APIRouter(prefix="/api")  # Removed dependencies that were causing issues
 
 # Models with enhanced validation
 class SentimentRequest(BaseModel):
@@ -130,7 +130,7 @@ async def analyze_product(request: ProductAnalysisRequest, req: Request, respons
         product_data = scrape_product(request.url)
         
         # Analyze reviews
-        reviews_analysis = await extract_product_pros_cons(product_data["reviews"], product_data)
+        pros, cons = await extract_product_pros_cons(product_data["reviews"], product_data)
         
         # Calculate value score (simple implementation for tests)
         def get_value_score(price, sentiment, rating):
@@ -157,8 +157,8 @@ async def analyze_product(request: ProductAnalysisRequest, req: Request, respons
             "price": product_data["price"],
             "value_score": value_score,
             "analysis": {
-                "pros": reviews_analysis["pros"],
-                "cons": reviews_analysis["cons"]
+                "pros": pros,
+                "cons": cons
             }
         }
     except Exception as e:

@@ -31,22 +31,31 @@ async def test_sentiment_analysis(async_client):
         result = response.json()
         assert "score" in result
         assert result["score"] > 0
-
 @pytest.mark.asyncio
 async def test_pros_cons_extraction(async_client):
-    test_reviews = ["The product has good quality but is expensive"]
+    test_reviews = [
+        "The product has good quality but is expensive"
+    ]
     test_product_data = {
         "title": "Test Product",
         "price": 99.99,
+        "currency": "USD",
         "description": "A test product",
-        "reviews": test_reviews
+        "reviews": [
+            {"text": "The product has good quality but is expensive", 
+             "rating": 4.0, 
+             "date": "2023-01-01", 
+             "verified": True}
+        ]
     }
     
-    with patch('api.ml_processor.extract_product_pros_cons') as mock_pros_cons:
-        mock_pros_cons.return_value = {
-            "pros": ["Good quality"],
-            "cons": ["Expensive"]
-        }
+    # Mock both the validation middleware and the extract_product_pros_cons function
+    with patch('api.ml_processor.extract_product_pros_cons') as mock_pros_cons, \
+         patch('api.validation.validation_middleware', side_effect=lambda req, call_next: call_next(req)):
+        mock_pros_cons.return_value = (
+            ["Good quality"],
+            ["Expensive"]
+        )
         response = await async_client.post(
             "/api/analyze/pros-cons",
             json={
@@ -63,14 +72,17 @@ async def test_pros_cons_extraction(async_client):
 
 @pytest.mark.asyncio
 async def test_scraper(async_client):
-    test_url = "https://example.com/product"
+    test_url = "https://amazon.com/product"
     
-    with patch('api.scraper.scrape_product') as mock_scraper:
+    with patch('api.scraper.scrape_product') as mock_scraper, \
+         patch('api.validation.ProductURL.validate_marketplace', return_value=True):
         mock_scraper.return_value = {
             "title": "Test Product",
             "price": 99.99,
+            "currency": "USD",
             "description": "A test product",
-            "reviews": ["Great product", "Good value"]
+            "reviews": [{"text": "Great product", "rating": 4.5, "date": "2023-01-01", "verified": True}, 
+                      {"text": "Good value", "rating": 4.0, "date": "2023-01-02", "verified": False}]
         }
         response = await async_client.post(
             "/api/scrape",
@@ -85,21 +97,21 @@ async def test_scraper(async_client):
 # Test product analysis endpoint
 @pytest.mark.asyncio
 async def test_analyze_product(async_client):
-    test_url = "https://example.com/product"
+    test_url = "https://amazon.com/product"
     
     with patch('api.routes.scrape_product') as mock_scraper, \
-         patch('api.routes.extract_product_pros_cons') as mock_pros_cons:
+         patch('api.routes.extract_product_pros_cons') as mock_pros_cons, \
+         patch('api.validation.ProductURL.validate_marketplace', return_value=True):
         mock_scraper.return_value = {
             "title": "Test Product",
             "price": 99.99,
+            "currency": "USD",
             "rating": 4.5,
-            "reviews": ["Great product"],
+            "reviews": [{"text": "Great product", "rating": 4.5, "date": "2023-01-01", "verified": True}],
             "description": "A test product"
         }
-        mock_pros_cons.return_value = {
-            "pros": ["Good quality"],
-            "cons": ["Expensive"]
-        }
+        # The extract_product_pros_cons function returns a tuple (pros, cons), not a dictionary
+        mock_pros_cons.return_value = (["Good quality"], ["Expensive"])
         
         response = await async_client.post(
             "/api/analyze/product",

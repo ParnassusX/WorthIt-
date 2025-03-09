@@ -31,7 +31,7 @@ Our existing architecture is well-structured and already incorporates several ke
    - Can be deployed to Railway/Render (free tier) for cost optimization
 
 2. **Hosting Strategy**
-   - Keep webhook handler on Vercel (current setup)
+   - Keep webhook handler on Netlify (current setup)
    - Move worker to Railway/Render instead of suggested AWS Lambda
    - Better for long-running tasks and event loop handling
 
@@ -54,7 +54,7 @@ Our existing architecture is well-structured and already incorporates several ke
    - Better control over models
    - Free tier sufficient for our current scale
 
-3. **Vercel + Railway over AWS Lambda**
+3. **Netlify + Railway over AWS Lambda**
    - Better for our event loop architecture
    - More generous free tiers
    - Simpler deployment and maintenance

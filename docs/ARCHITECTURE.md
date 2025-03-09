@@ -78,7 +78,7 @@ WorthIt! is a Telegram bot that helps users evaluate product value through autom
 5. URL validation against allowed domains
 
 ## Deployment
-- **Bot**: Vercel Serverless
+- **Bot**: Netlify Serverless Functions
   - Webhook-based updates
   - Environment variables configured
   - Auto-scaling enabled
@@ -87,17 +87,54 @@ WorthIt! is a Telegram bot that helps users evaluate product value through autom
     - Request isolation to prevent cascading failures
     - Proper error management with custom handlers
     - Rate limiting (5 requests/min)
-    - Vercel-optimized 10s timeouts
-- Redis connection enhancements
-    - SSL/TLS configuration for Upstash
-    - Exponential backoff retry logic
-    - Connection pooling and keepalive
-- **API**: Vercel Serverless Functions
+    - Netlify-optimized timeouts
+
+- **Service Mesh & Performance**
+  - ✅ Advanced circuit breaker patterns
+    - Error rate thresholds
+    - Minimum request thresholds
+    - Sliding window monitoring
+  - ✅ Request batching optimization
+    - Configurable batch sizes
+    - Timeout-based processing
+    - Performance metrics tracking
+  - ✅ Enhanced analytics
+    - Real-time performance monitoring
+    - Traffic pattern analysis
+    - Service dependency tracking
+  - ✅ Auto-scaling improvements
+    - CPU and memory thresholds
+    - Cooldown periods
+    - Metrics-based scaling decisions
+  - ✅ Security enhancements
+    - Advanced rate limiting with adaptive thresholds
+    - DDoS protection with traffic pattern analysis
+      - Request rate monitoring and burst detection
+      - Automated IP blocking for suspicious patterns
+      - Payload analysis for attack detection
+      - Comprehensive security audit logging
+      - Real-time mitigation responses
+    - Enhanced API authentication
+    - Request validation
+
+- **Redis Connection Enhancements**
+  - SSL/TLS configuration for Upstash
+  - Exponential backoff retry logic
+  - Connection pooling and keepalive
+  - Advanced health monitoring
+  - Stale connection cleanup
+
+- **API**: Netlify Serverless Functions
   - Serverless functions for analysis
   - Edge caching where possible
+  - Response compression
+  - Load balancing strategies
+
 - **Database**: Supabase
   - PostgreSQL backend
   - Real-time capabilities
+  - Connection pooling
+  - Query optimization
 
 ## Current Implementation Status
 

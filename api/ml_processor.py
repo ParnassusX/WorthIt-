@@ -299,7 +299,7 @@ def analyze_sentiment(text: str) -> Dict[str, Union[str, float]]:
     return {"label": label, "score": score}
 
 # Simple implementation of extract_product_pros_cons for tests
-async def extract_product_pros_cons(reviews: List[str], product_data: Dict[str, Any]) -> Dict[str, List[str]]:
+async def extract_product_pros_cons(reviews: List[str], product_data: Dict[str, Any] = None) -> Tuple[List[str], List[str]]:
     """Extract pros and cons from a list of product reviews.
     This is a simplified version for tests.
     """
@@ -341,7 +341,7 @@ async def extract_product_pros_cons(reviews: List[str], product_data: Dict[str, 
     if not cons:
         cons = ["No significant cons found"]
     
-    return {"pros": pros, "cons": cons}
+    return pros, cons
 
 # Convenience functions
 async def analyze_reviews(reviews: List[Dict[str, Any]]) -> Dict[str, Any]:

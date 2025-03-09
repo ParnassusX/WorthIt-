@@ -7,6 +7,8 @@ import os
 import re
 import asyncio
 import logging
+import json
+import time
 from dotenv import load_dotenv
 from .bot import start, handle_text, analyze_product_url, format_analysis_response, get_bot_instance
 from .http_client import get_http_client, close_http_client
@@ -53,15 +55,13 @@ async def error_handler(update: object, context) -> None:
     
     logger.error(
         f"Exception while handling an update: {context.error}",
-        extra={"context": json.dumps(error_context)},
         exc_info=True
     )
     
     # Special handling for event loop errors with recovery attempt
     if isinstance(context.error, RuntimeError) and "Event loop is closed" in str(context.error):
         logger.info(
-            "Detected event loop closure - attempting recovery",
-            extra={"context": json.dumps({"recovery": "event_loop"})}
+            "Detected event loop closure - attempting recovery"
         )
         try:
             loop = asyncio.new_event_loop()
@@ -69,8 +69,7 @@ async def error_handler(update: object, context) -> None:
             return
         except Exception as e:
             logger.error(
-                "Failed to recover event loop",
-                extra={"context": json.dumps({"recovery_error": str(e)})}
+                f"Failed to recover event loop: {e}"
             )
     
     # Enhanced user communication with proper error tracking
@@ -82,8 +81,7 @@ async def error_handler(update: object, context) -> None:
             )
         except Exception as e:
             logger.error(
-                "Failed to send error message to user",
-                extra={"context": json.dumps({"error": str(e), "chat_id": update.effective_chat.id})}
+                f"Failed to send error message to user: {e}"
             )
     
     # Notify monitoring system
@@ -91,8 +89,7 @@ async def error_handler(update: object, context) -> None:
         await notify_error_monitoring(error_context)
     except Exception as e:
         logger.error(
-            "Failed to notify monitoring system",
-            extra={"context": json.dumps({"error": str(e)})}
+            f"Failed to notify monitoring system: {e}"
         )
 
 
@@ -135,10 +132,12 @@ async def analyze_product(url: str, chat_id: int = None) -> Dict[str, Any]:
         
         # Create a task for background processing
         task = {
-            'task_type': 'product_analysis',
-            'url': url,
+            'type': 'product_analysis',
+            'data': {
+                'url': url,
+                'chat_id': chat_id
+            },
             'status': 'pending',
-            'chat_id': chat_id,
             'created_at': loop.time()
         }
         
@@ -528,6 +527,9 @@ async def webhook_handler(request: Request):
         except Exception as e:
             logger.error(f"Failed to enqueue task: {e}")
             return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
     
     except Exception as e:
         logger.error(f"Error in webhook handler: {str(e)}")
@@ -584,7 +586,7 @@ async def webhook_handler(request: Request):
             }
             
             # Track product link interactions
-            if any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
                 USER_LINK_INTERACTIONS.inc()
             task_id = await enqueue_task(task)
             logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
@@ -599,6 +601,9 @@ async def webhook_handler(request: Request):
         except Exception as e:
             logger.error(f"Failed to enqueue task: {e}")
             return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
     
     except Exception as e:
         logger.error(f"Error in webhook handler: {str(e)}")
@@ -723,7 +728,7 @@ async def webhook_handler(request: Request):
             }
             
             # Track product link interactions
-            if any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
                 USER_LINK_INTERACTIONS.inc()
             task_id = await enqueue_task(task)
             logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
@@ -738,7 +743,1142 @@ async def webhook_handler(request: Request):
         except Exception as e:
             logger.error(f"Failed to enqueue task: {e}")
             return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
     
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+
+class WebhookHandler:
+    def __init__(self, bot_token: str):
+        self.bot_token = bot_token
+        self.logger = logging.getLogger(__name__)
+        self._setup_monitoring()
+
+    def _setup_monitoring(self):
+        """Initialize monitoring metrics for webhook handler"""
+        self.webhook_latency = RESPONSE_TIME.labels(
+            method='POST',
+            endpoint='/webhook',
+            component='webhook_handler'
+        )
+        self.webhook_counter = REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='success',
+            component='webhook_handler'
+        )
+
+    async def handle_update(self, update: dict) -> None:
+        """Handle incoming webhook updates with enhanced monitoring and error handling"""
+        start_time = time.time()
+        try:
+            telegram_update = Update.de_json(update, _bot_instance)
+            await self._process_update(telegram_update)
+            duration = time.time() - start_time
+            self.webhook_latency.observe(duration)
+            self.webhook_counter.inc()
+        except Exception as e:
+            error_context = {
+                "update_id": update.get('update_id'),
+                "chat_id": update.get('message', {}).get('chat', {}).get('id'),
+                "error": str(e)
+            }
+            self.logger.error(
+                "Error processing webhook update",
+                extra={"context": json.dumps(error_context)},
+                exc_info=True
+            )
+            await self._handle_error(e, error_context)
+
+    async def _process_update(self, update: Update) -> None:
+        """Process a single update with proper error handling"""
+        if update.message and update.message.text:
+            if update.message.text.startswith('/'):
+                await self._handle_command(update)
+            else:
+                await self._handle_message(update)
+        elif update.callback_query:
+            await self._handle_callback(update.callback_query)
+
+    async def _handle_error(self, error: Exception, context: dict) -> None:
+        """Enhanced error handling with proper monitoring and user communication"""
+        REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='error',
+            component='webhook_handler'
+        ).inc()
+
+        if isinstance(error, httpx.HTTPError):
+            await self._handle_http_error(error, context)
+        elif isinstance(error, asyncio.TimeoutError):
+            await self._handle_timeout_error(context)
+        else:
+            await self._handle_general_error(error, context)
+
+@app.post("/webhook")
+@limiter.limit("5/minute")
+async def webhook_handler(request: Request):
+    """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
+    try:
+        # Get the bot instance (singleton)
+        bot = get_bot_instance()
+        if not bot:
+            logger.error("Bot instance not initialized")
+            return {"status": "error", "detail": "Bot not initialized"}
+        
+        # Parse the update
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Handle /start command immediately
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            try:
+                await bot.start(update, None)
+                USER_START_COMMANDS.inc()
+                return {"status": "ok", "detail": "Start command processed"}
+            except Exception as e:
+                logger.error(f"Error processing start command: {e}")
+                return {"status": "error", "detail": str(e)}
+        
+        # For other commands, enqueue the task
+        try:
+            from worker.queue import enqueue_task, get_task_queue
+            
+            # Initialize task queue with connection check
+            task_queue = get_task_queue()
+            await task_queue.connect()
+            
+            # Create task with improved metadata
+            task = {
+                'task_type': 'telegram_update',
+                'update_data': data,
+                'chat_id': update.effective_chat.id if update.effective_chat else None,
+                'created_at': asyncio.get_event_loop().time(),
+                'status': 'pending',
+                'priority': 'high' if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]) else 'normal'
+            }
+            
+            # Track product link interactions
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                USER_LINK_INTERACTIONS.inc()
+            task_id = await enqueue_task(task)
+            logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
+            
+            return {
+                "status": "ok", 
+                "detail": "Task enqueued for processing", 
+                "task_id": task_id,
+                "priority": task['priority']
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to enqueue task: {e}")
+            return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+    
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+
+class WebhookHandler:
+    def __init__(self, bot_token: str):
+        self.bot_token = bot_token
+        self.logger = logging.getLogger(__name__)
+        self._setup_monitoring()
+
+    def _setup_monitoring(self):
+        """Initialize monitoring metrics for webhook handler"""
+        self.webhook_latency = RESPONSE_TIME.labels(
+            method='POST',
+            endpoint='/webhook',
+            component='webhook_handler'
+        )
+        self.webhook_counter = REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='success',
+            component='webhook_handler'
+        )
+
+    async def handle_update(self, update: dict) -> None:
+        """Handle incoming webhook updates with enhanced monitoring and error handling"""
+        start_time = time.time()
+        try:
+            telegram_update = Update.de_json(update, _bot_instance)
+            await self._process_update(telegram_update)
+            duration = time.time() - start_time
+            self.webhook_latency.observe(duration)
+            self.webhook_counter.inc()
+        except Exception as e:
+            error_context = {
+                "update_id": update.get('update_id'),
+                "chat_id": update.get('message', {}).get('chat', {}).get('id'),
+                "error": str(e)
+            }
+            self.logger.error(
+                "Error processing webhook update",
+                extra={"context": json.dumps(error_context)},
+                exc_info=True
+            )
+            await self._handle_error(e, error_context)
+
+    async def _process_update(self, update: Update) -> None:
+        """Process a single update with proper error handling"""
+        if update.message and update.message.text:
+            if update.message.text.startswith('/'):
+                await self._handle_command(update)
+            else:
+                await self._handle_message(update)
+        elif update.callback_query:
+            await self._handle_callback(update.callback_query)
+
+    async def _handle_error(self, error: Exception, context: dict) -> None:
+        """Enhanced error handling with proper monitoring and user communication"""
+        REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='error',
+            component='webhook_handler'
+        ).inc()
+
+        if isinstance(error, httpx.HTTPError):
+            await self._handle_http_error(error, context)
+        elif isinstance(error, asyncio.TimeoutError):
+            await self._handle_timeout_error(context)
+        else:
+            await self._handle_general_error(error, context)
+
+@app.post("/webhook")
+@limiter.limit("5/minute")
+async def webhook_handler(request: Request):
+    """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
+    try:
+        # Get the bot instance (singleton)
+        bot = get_bot_instance()
+        if not bot:
+            logger.error("Bot instance not initialized")
+            return {"status": "error", "detail": "Bot not initialized"}
+        
+        # Parse the update
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Handle /start command immediately
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            try:
+                await bot.start(update, None)
+                USER_START_COMMANDS.inc()
+                return {"status": "ok", "detail": "Start command processed"}
+            except Exception as e:
+                logger.error(f"Error processing start command: {e}")
+                return {"status": "error", "detail": str(e)}
+        
+        # For other commands, enqueue the task
+        try:
+            from worker.queue import enqueue_task, get_task_queue
+            
+            # Initialize task queue with connection check
+            task_queue = get_task_queue()
+            await task_queue.connect()
+            
+            # Create task with improved metadata
+            task = {
+                'task_type': 'telegram_update',
+                'update_data': data,
+                'chat_id': update.effective_chat.id if update.effective_chat else None,
+                'created_at': asyncio.get_event_loop().time(),
+                'status': 'pending',
+                'priority': 'high' if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]) else 'normal'
+            }
+            
+            # Track product link interactions
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                USER_LINK_INTERACTIONS.inc()
+            task_id = await enqueue_task(task)
+            logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
+            
+            return {
+                "status": "ok", 
+                "detail": "Task enqueued for processing", 
+                "task_id": task_id,
+                "priority": task['priority']
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to enqueue task: {e}")
+            return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+    
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+
+class WebhookHandler:
+    def __init__(self, bot_token: str):
+        self.bot_token = bot_token
+        self.logger = logging.getLogger(__name__)
+        self._setup_monitoring()
+
+    def _setup_monitoring(self):
+        """Initialize monitoring metrics for webhook handler"""
+        self.webhook_latency = RESPONSE_TIME.labels(
+            method='POST',
+            endpoint='/webhook',
+            component='webhook_handler'
+        )
+        self.webhook_counter = REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='success',
+            component='webhook_handler'
+        )
+
+    async def handle_update(self, update: dict) -> None:
+        """Handle incoming webhook updates with enhanced monitoring and error handling"""
+        start_time = time.time()
+        try:
+            telegram_update = Update.de_json(update, _bot_instance)
+            await self._process_update(telegram_update)
+            duration = time.time() - start_time
+            self.webhook_latency.observe(duration)
+            self.webhook_counter.inc()
+        except Exception as e:
+            error_context = {
+                "update_id": update.get('update_id'),
+                "chat_id": update.get('message', {}).get('chat', {}).get('id'),
+                "error": str(e)
+            }
+            self.logger.error(
+                "Error processing webhook update",
+                extra={"context": json.dumps(error_context)},
+                exc_info=True
+            )
+            await self._handle_error(e, error_context)
+
+    async def _process_update(self, update: Update) -> None:
+        """Process a single update with proper error handling"""
+        if update.message and update.message.text:
+            if update.message.text.startswith('/'):
+                await self._handle_command(update)
+            else:
+                await self._handle_message(update)
+        elif update.callback_query:
+            await self._handle_callback(update.callback_query)
+
+    async def _handle_error(self, error: Exception, context: dict) -> None:
+        """Enhanced error handling with proper monitoring and user communication"""
+        REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='error',
+            component='webhook_handler'
+        ).inc()
+
+        if isinstance(error, httpx.HTTPError):
+            await self._handle_http_error(error, context)
+        elif isinstance(error, asyncio.TimeoutError):
+            await self._handle_timeout_error(context)
+        else:
+            await self._handle_general_error(error, context)
+
+@app.post("/webhook")
+@limiter.limit("5/minute")
+async def webhook_handler(request: Request):
+    """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
+    try:
+        # Get the bot instance (singleton)
+        bot = get_bot_instance()
+        if not bot:
+            logger.error("Bot instance not initialized")
+            return {"status": "error", "detail": "Bot not initialized"}
+        
+        # Parse the update
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Handle /start command immediately
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            try:
+                await bot.start(update, None)
+                USER_START_COMMANDS.inc()
+                return {"status": "ok", "detail": "Start command processed"}
+            except Exception as e:
+                logger.error(f"Error processing start command: {e}")
+                return {"status": "error", "detail": str(e)}
+        
+        # For other commands, enqueue the task
+        try:
+            from worker.queue import enqueue_task, get_task_queue
+            
+            # Initialize task queue with connection check
+            task_queue = get_task_queue()
+            await task_queue.connect()
+            
+            # Create task with improved metadata
+            task = {
+                'task_type': 'telegram_update',
+                'update_data': data,
+                'chat_id': update.effective_chat.id if update.effective_chat else None,
+                'created_at': asyncio.get_event_loop().time(),
+                'status': 'pending',
+                'priority': 'high' if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]) else 'normal'
+            }
+            
+            # Track product link interactions
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                USER_LINK_INTERACTIONS.inc()
+            task_id = await enqueue_task(task)
+            logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
+            
+            return {
+                "status": "ok", 
+                "detail": "Task enqueued for processing", 
+                "task_id": task_id,
+                "priority": task['priority']
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to enqueue task: {e}")
+            return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+    
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+
+class WebhookHandler:
+    def __init__(self, bot_token: str):
+        self.bot_token = bot_token
+        self.logger = logging.getLogger(__name__)
+        self._setup_monitoring()
+
+    def _setup_monitoring(self):
+        """Initialize monitoring metrics for webhook handler"""
+        self.webhook_latency = RESPONSE_TIME.labels(
+            method='POST',
+            endpoint='/webhook',
+            component='webhook_handler'
+        )
+        self.webhook_counter = REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='success',
+            component='webhook_handler'
+        )
+
+    async def handle_update(self, update: dict) -> None:
+        """Handle incoming webhook updates with enhanced monitoring and error handling"""
+        start_time = time.time()
+        try:
+            telegram_update = Update.de_json(update, _bot_instance)
+            await self._process_update(telegram_update)
+            duration = time.time() - start_time
+            self.webhook_latency.observe(duration)
+            self.webhook_counter.inc()
+        except Exception as e:
+            error_context = {
+                "update_id": update.get('update_id'),
+                "chat_id": update.get('message', {}).get('chat', {}).get('id'),
+                "error": str(e)
+            }
+            self.logger.error(
+                "Error processing webhook update",
+                extra={"context": json.dumps(error_context)},
+                exc_info=True
+            )
+            await self._handle_error(e, error_context)
+
+    async def _process_update(self, update: Update) -> None:
+        """Process a single update with proper error handling"""
+        if update.message and update.message.text:
+            if update.message.text.startswith('/'):
+                await self._handle_command(update)
+            else:
+                await self._handle_message(update)
+        elif update.callback_query:
+            await self._handle_callback(update.callback_query)
+
+    async def _handle_error(self, error: Exception, context: dict) -> None:
+        """Enhanced error handling with proper monitoring and user communication"""
+        REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='error',
+            component='webhook_handler'
+        ).inc()
+
+        if isinstance(error, httpx.HTTPError):
+            await self._handle_http_error(error, context)
+        elif isinstance(error, asyncio.TimeoutError):
+            await self._handle_timeout_error(context)
+        else:
+            await self._handle_general_error(error, context)
+
+@app.post("/webhook")
+@limiter.limit("5/minute")
+async def webhook_handler(request: Request):
+    """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
+    try:
+        # Get the bot instance (singleton)
+        bot = get_bot_instance()
+        if not bot:
+            logger.error("Bot instance not initialized")
+            return {"status": "error", "detail": "Bot not initialized"}
+        
+        # Parse the update
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Handle /start command immediately
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            try:
+                await bot.start(update, None)
+                USER_START_COMMANDS.inc()
+                return {"status": "ok", "detail": "Start command processed"}
+            except Exception as e:
+                logger.error(f"Error processing start command: {e}")
+                return {"status": "error", "detail": str(e)}
+        
+        # For other commands, enqueue the task
+        try:
+            from worker.queue import enqueue_task, get_task_queue
+            
+            # Initialize task queue with connection check
+            task_queue = get_task_queue()
+            await task_queue.connect()
+            
+            # Create task with improved metadata
+            task = {
+                'task_type': 'telegram_update',
+                'update_data': data,
+                'chat_id': update.effective_chat.id if update.effective_chat else None,
+                'created_at': asyncio.get_event_loop().time(),
+                'status': 'pending',
+                'priority': 'high' if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]) else 'normal'
+            }
+            
+            # Track product link interactions
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                USER_LINK_INTERACTIONS.inc()
+            task_id = await enqueue_task(task)
+            logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
+            
+            return {
+                "status": "ok", 
+                "detail": "Task enqueued for processing", 
+                "task_id": task_id,
+                "priority": task['priority']
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to enqueue task: {e}")
+            return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+    
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+
+class WebhookHandler:
+    def __init__(self, bot_token: str):
+        self.bot_token = bot_token
+        self.logger = logging.getLogger(__name__)
+        self._setup_monitoring()
+
+    def _setup_monitoring(self):
+        """Initialize monitoring metrics for webhook handler"""
+        self.webhook_latency = RESPONSE_TIME.labels(
+            method='POST',
+            endpoint='/webhook',
+            component='webhook_handler'
+        )
+        self.webhook_counter = REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='success',
+            component='webhook_handler'
+        )
+
+    async def handle_update(self, update: dict) -> None:
+        """Handle incoming webhook updates with enhanced monitoring and error handling"""
+        start_time = time.time()
+        try:
+            telegram_update = Update.de_json(update, _bot_instance)
+            await self._process_update(telegram_update)
+            duration = time.time() - start_time
+            self.webhook_latency.observe(duration)
+            self.webhook_counter.inc()
+        except Exception as e:
+            error_context = {
+                "update_id": update.get('update_id'),
+                "chat_id": update.get('message', {}).get('chat', {}).get('id'),
+                "error": str(e)
+            }
+            self.logger.error(
+                "Error processing webhook update",
+                extra={"context": json.dumps(error_context)},
+                exc_info=True
+            )
+            await self._handle_error(e, error_context)
+
+    async def _process_update(self, update: Update) -> None:
+        """Process a single update with proper error handling"""
+        if update.message and update.message.text:
+            if update.message.text.startswith('/'):
+                await self._handle_command(update)
+            else:
+                await self._handle_message(update)
+        elif update.callback_query:
+            await self._handle_callback(update.callback_query)
+
+    async def _handle_error(self, error: Exception, context: dict) -> None:
+        """Enhanced error handling with proper monitoring and user communication"""
+        REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='error',
+            component='webhook_handler'
+        ).inc()
+
+        if isinstance(error, httpx.HTTPError):
+            await self._handle_http_error(error, context)
+        elif isinstance(error, asyncio.TimeoutError):
+            await self._handle_timeout_error(context)
+        else:
+            await self._handle_general_error(error, context)
+
+@app.post("/webhook")
+@limiter.limit("5/minute")
+async def webhook_handler(request: Request):
+    """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
+    try:
+        # Get the bot instance (singleton)
+        bot = get_bot_instance()
+        if not bot:
+            logger.error("Bot instance not initialized")
+            return {"status": "error", "detail": "Bot not initialized"}
+        
+        # Parse the update
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Handle /start command immediately
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            try:
+                await bot.start(update, None)
+                USER_START_COMMANDS.inc()
+                return {"status": "ok", "detail": "Start command processed"}
+            except Exception as e:
+                logger.error(f"Error processing start command: {e}")
+                return {"status": "error", "detail": str(e)}
+        
+        # For other commands, enqueue the task
+        try:
+            from worker.queue import enqueue_task, get_task_queue
+            
+            # Initialize task queue with connection check
+            task_queue = get_task_queue()
+            await task_queue.connect()
+            
+            # Create task with improved metadata
+            task = {
+                'task_type': 'telegram_update',
+                'update_data': data,
+                'chat_id': update.effective_chat.id if update.effective_chat else None,
+                'created_at': asyncio.get_event_loop().time(),
+                'status': 'pending',
+                'priority': 'high' if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]) else 'normal'
+            }
+            
+            # Track product link interactions
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                USER_LINK_INTERACTIONS.inc()
+            task_id = await enqueue_task(task)
+            logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
+            
+            return {
+                "status": "ok", 
+                "detail": "Task enqueued for processing", 
+                "task_id": task_id,
+                "priority": task['priority']
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to enqueue task: {e}")
+            return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+    
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+
+class WebhookHandler:
+    def __init__(self, bot_token: str):
+        self.bot_token = bot_token
+        self.logger = logging.getLogger(__name__)
+        self._setup_monitoring()
+
+    def _setup_monitoring(self):
+        """Initialize monitoring metrics for webhook handler"""
+        self.webhook_latency = RESPONSE_TIME.labels(
+            method='POST',
+            endpoint='/webhook',
+            component='webhook_handler'
+        )
+        self.webhook_counter = REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='success',
+            component='webhook_handler'
+        )
+
+    async def handle_update(self, update: dict) -> None:
+        """Handle incoming webhook updates with enhanced monitoring and error handling"""
+        start_time = time.time()
+        try:
+            telegram_update = Update.de_json(update, _bot_instance)
+            await self._process_update(telegram_update)
+            duration = time.time() - start_time
+            self.webhook_latency.observe(duration)
+            self.webhook_counter.inc()
+        except Exception as e:
+            error_context = {
+                "update_id": update.get('update_id'),
+                "chat_id": update.get('message', {}).get('chat', {}).get('id'),
+                "error": str(e)
+            }
+            self.logger.error(
+                "Error processing webhook update",
+                extra={"context": json.dumps(error_context)},
+                exc_info=True
+            )
+            await self._handle_error(e, error_context)
+
+    async def _process_update(self, update: Update) -> None:
+        """Process a single update with proper error handling"""
+        if update.message and update.message.text:
+            if update.message.text.startswith('/'):
+                await self._handle_command(update)
+            else:
+                await self._handle_message(update)
+        elif update.callback_query:
+            await self._handle_callback(update.callback_query)
+
+    async def _handle_error(self, error: Exception, context: dict) -> None:
+        """Enhanced error handling with proper monitoring and user communication"""
+        REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='error',
+            component='webhook_handler'
+        ).inc()
+
+        if isinstance(error, httpx.HTTPError):
+            await self._handle_http_error(error, context)
+        elif isinstance(error, asyncio.TimeoutError):
+            await self._handle_timeout_error(context)
+        else:
+            await self._handle_general_error(error, context)
+
+@app.post("/webhook")
+@limiter.limit("5/minute")
+async def webhook_handler(request: Request):
+    """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
+    try:
+        # Get the bot instance (singleton)
+        bot = get_bot_instance()
+        if not bot:
+            logger.error("Bot instance not initialized")
+            return {"status": "error", "detail": "Bot not initialized"}
+        
+        # Parse the update
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Handle /start command immediately
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            try:
+                await bot.start(update, None)
+                USER_START_COMMANDS.inc()
+                return {"status": "ok", "detail": "Start command processed"}
+            except Exception as e:
+                logger.error(f"Error processing start command: {e}")
+                return {"status": "error", "detail": str(e)}
+        
+        # For other commands, enqueue the task
+        try:
+            from worker.queue import enqueue_task, get_task_queue
+            
+            # Initialize task queue with connection check
+            task_queue = get_task_queue()
+            await task_queue.connect()
+            
+            # Create task with improved metadata
+            task = {
+                'task_type': 'telegram_update',
+                'update_data': data,
+                'chat_id': update.effective_chat.id if update.effective_chat else None,
+                'created_at': asyncio.get_event_loop().time(),
+                'status': 'pending',
+                'priority': 'high' if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]) else 'normal'
+            }
+            
+            # Track product link interactions
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                USER_LINK_INTERACTIONS.inc()
+            task_id = await enqueue_task(task)
+            logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
+            
+            return {
+                "status": "ok", 
+                "detail": "Task enqueued for processing", 
+                "task_id": task_id,
+                "priority": task['priority']
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to enqueue task: {e}")
+            return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+    
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+
+class WebhookHandler:
+    def __init__(self, bot_token: str):
+        self.bot_token = bot_token
+        self.logger = logging.getLogger(__name__)
+        self._setup_monitoring()
+
+    def _setup_monitoring(self):
+        """Initialize monitoring metrics for webhook handler"""
+        self.webhook_latency = RESPONSE_TIME.labels(
+            method='POST',
+            endpoint='/webhook',
+            component='webhook_handler'
+        )
+        self.webhook_counter = REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='success',
+            component='webhook_handler'
+        )
+
+    async def handle_update(self, update: dict) -> None:
+        """Handle incoming webhook updates with enhanced monitoring and error handling"""
+        start_time = time.time()
+        try:
+            telegram_update = Update.de_json(update, _bot_instance)
+            await self._process_update(telegram_update)
+            duration = time.time() - start_time
+            self.webhook_latency.observe(duration)
+            self.webhook_counter.inc()
+        except Exception as e:
+            error_context = {
+                "update_id": update.get('update_id'),
+                "chat_id": update.get('message', {}).get('chat', {}).get('id'),
+                "error": str(e)
+            }
+            self.logger.error(
+                "Error processing webhook update",
+                extra={"context": json.dumps(error_context)},
+                exc_info=True
+            )
+            await self._handle_error(e, error_context)
+
+    async def _process_update(self, update: Update) -> None:
+        """Process a single update with proper error handling"""
+        if update.message and update.message.text:
+            if update.message.text.startswith('/'):
+                await self._handle_command(update)
+            else:
+                await self._handle_message(update)
+        elif update.callback_query:
+            await self._handle_callback(update.callback_query)
+
+    async def _handle_error(self, error: Exception, context: dict) -> None:
+        """Enhanced error handling with proper monitoring and user communication"""
+        REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='error',
+            component='webhook_handler'
+        ).inc()
+
+        if isinstance(error, httpx.HTTPError):
+            await self._handle_http_error(error, context)
+        elif isinstance(error, asyncio.TimeoutError):
+            await self._handle_timeout_error(context)
+        else:
+            await self._handle_general_error(error, context)
+
+@app.post("/webhook")
+@limiter.limit("5/minute")
+async def webhook_handler(request: Request):
+    """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
+    try:
+        # Get the bot instance (singleton)
+        bot = get_bot_instance()
+        if not bot:
+            logger.error("Bot instance not initialized")
+            return {"status": "error", "detail": "Bot not initialized"}
+        
+        # Parse the update
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Handle /start command immediately
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            try:
+                await bot.start(update, None)
+                USER_START_COMMANDS.inc()
+                return {"status": "ok", "detail": "Start command processed"}
+            except Exception as e:
+                logger.error(f"Error processing start command: {e}")
+                return {"status": "error", "detail": str(e)}
+        
+        # For other commands, enqueue the task
+        try:
+            from worker.queue import enqueue_task, get_task_queue
+            
+            # Initialize task queue with connection check
+            task_queue = get_task_queue()
+            await task_queue.connect()
+            
+            # Create task with improved metadata
+            task = {
+                'task_type': 'telegram_update',
+                'update_data': data,
+                'chat_id': update.effective_chat.id if update.effective_chat else None,
+                'created_at': asyncio.get_event_loop().time(),
+                'status': 'pending',
+                'priority': 'high' if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]) else 'normal'
+            }
+            
+            # Track product link interactions
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                USER_LINK_INTERACTIONS.inc()
+            task_id = await enqueue_task(task)
+            logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
+            
+            return {
+                "status": "ok", 
+                "detail": "Task enqueued for processing", 
+                "task_id": task_id,
+                "priority": task['priority']
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to enqueue task: {e}")
+            return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+    
+    except Exception as e:
+        logger.error(f"Error in webhook handler: {str(e)}")
+        return {"status": "error", "detail": "Internal server error"}
+
+class WebhookHandler:
+    def __init__(self, bot_token: str):
+        self.bot_token = bot_token
+        self.logger = logging.getLogger(__name__)
+        self._setup_monitoring()
+
+    def _setup_monitoring(self):
+        """Initialize monitoring metrics for webhook handler"""
+        self.webhook_latency = RESPONSE_TIME.labels(
+            method='POST',
+            endpoint='/webhook',
+            component='webhook_handler'
+        )
+        self.webhook_counter = REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='success',
+            component='webhook_handler'
+        )
+
+    async def handle_update(self, update: dict) -> None:
+        """Handle incoming webhook updates with enhanced monitoring and error handling"""
+        start_time = time.time()
+        try:
+            telegram_update = Update.de_json(update, _bot_instance)
+            await self._process_update(telegram_update)
+            duration = time.time() - start_time
+            self.webhook_latency.observe(duration)
+            self.webhook_counter.inc()
+        except Exception as e:
+            error_context = {
+                "update_id": update.get('update_id'),
+                "chat_id": update.get('message', {}).get('chat', {}).get('id'),
+                "error": str(e)
+            }
+            self.logger.error(
+                "Error processing webhook update",
+                extra={"context": json.dumps(error_context)},
+                exc_info=True
+            )
+            await self._handle_error(e, error_context)
+
+    async def _process_update(self, update: Update) -> None:
+        """Process a single update with proper error handling"""
+        if update.message and update.message.text:
+            if update.message.text.startswith('/'):
+                await self._handle_command(update)
+            else:
+                await self._handle_message(update)
+        elif update.callback_query:
+            await self._handle_callback(update.callback_query)
+
+    async def _handle_error(self, error: Exception, context: dict) -> None:
+        """Enhanced error handling with proper monitoring and user communication"""
+        REQUEST_COUNT.labels(
+            method='POST',
+            endpoint='/webhook',
+            status='error',
+            component='webhook_handler'
+        ).inc()
+
+        if isinstance(error, httpx.HTTPError):
+            await self._handle_http_error(error, context)
+        elif isinstance(error, asyncio.TimeoutError):
+            await self._handle_timeout_error(context)
+        else:
+            await self._handle_general_error(error, context)
+
+@app.post("/webhook")
+@limiter.limit("5/minute")
+async def webhook_handler(request: Request):
+    """Handle incoming updates from Telegram using a stateless approach with Redis queue"""
+    try:
+        # Get the bot instance (singleton)
+        bot = get_bot_instance()
+        if not bot:
+            logger.error("Bot instance not initialized")
+            return {"status": "error", "detail": "Bot not initialized"}
+        
+        # Parse the update
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        # Ensure we have a valid event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Handle /start command immediately
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            try:
+                await bot.start(update, None)
+                USER_START_COMMANDS.inc()
+                return {"status": "ok", "detail": "Start command processed"}
+            except Exception as e:
+                logger.error(f"Error processing start command: {e}")
+                return {"status": "error", "detail": str(e)}
+        
+        # For other commands, enqueue the task
+        try:
+            from worker.queue import enqueue_task, get_task_queue
+            
+            # Initialize task queue with connection check
+            task_queue = get_task_queue()
+            await task_queue.connect()
+            
+            # Create task with improved metadata
+            task = {
+                'task_type': 'telegram_update',
+                'update_data': data,
+                'chat_id': update.effective_chat.id if update.effective_chat else None,
+                'created_at': asyncio.get_event_loop().time(),
+                'status': 'pending',
+                'priority': 'high' if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]) else 'normal'
+            }
+            
+            # Track product link interactions
+            if update.message and update.message.text and any(domain in update.message.text.lower() for domain in ["amazon", "ebay"]):
+                USER_LINK_INTERACTIONS.inc()
+            task_id = await enqueue_task(task)
+            logger.info(f"Task {task_id} enqueued successfully with priority {task['priority']}")
+            
+            return {
+                "status": "ok", 
+                "detail": "Task enqueued for processing", 
+                "task_id": task_id,
+                "priority": task['priority']
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to enqueue task: {e}")
+            return {"status": "error", "detail": f"Failed to enqueue task: {str(e)}"}
     except Exception as e:
         logger.error(f"Error in webhook handler: {str(e)}")
         return {"status": "error", "detail": "Internal server error"}

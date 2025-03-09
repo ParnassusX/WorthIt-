@@ -1,8 +1,13 @@
 import pytest
 import asyncio
 import os
+import sys
 import httpx
 import json
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
 from redis.asyncio import Redis
@@ -73,12 +78,12 @@ async def async_client(test_app):
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as client:
         yield client
-
 @pytest.fixture
 async def mock_redis():
     """Create a mock Redis client for testing."""
     mock_client = AsyncMock(spec=Redis)
-    # Configure basic Redis operations
+    
+    # Configure basic Redis operations with proper async mocking
     mock_client.get = AsyncMock(return_value=json.dumps({
         "status": "completed",
         "result": {
@@ -92,12 +97,20 @@ async def mock_redis():
             }
         }
     }).encode())
-    mock_client.set = AsyncMock(return_value=True)
-    mock_client.ping = AsyncMock(return_value=True)
-    mock_client.info = AsyncMock(return_value={"redis_version": "6.0.0"})
     
-    # Configure queue operations
+    # Ensure all Redis operations are properly mocked as async
+    mock_client.set = AsyncMock(return_value=True)
+    mock_client.delete = AsyncMock(return_value=1)
+    mock_client.exists = AsyncMock(return_value=1)
+    mock_client.ping = AsyncMock(return_value=True)
+    mock_client.info = AsyncMock(return_value={"redis_version": "7.2.0"})
+    mock_client.execute_command = AsyncMock(return_value=True)
+    mock_client.hset = AsyncMock(return_value=True)  # Add hset mock for queue operations
+    mock_client.hgetall = AsyncMock(return_value={"status": "failed", "data": json.dumps({"id": "task-123", "status": "failed", "error": "Test error"})})  # Add hgetall mock
+    
+    # Configure queue operations with proper async mocking
     mock_client.lpush = AsyncMock(return_value=1)
+    mock_client.rpush = AsyncMock(return_value=1)
     mock_client.brpop = AsyncMock(return_value=(b'tasks', json.dumps({
         'id': 'task-123',
         'type': 'product_analysis',
@@ -106,19 +119,21 @@ async def mock_redis():
             'chat_id': 123456789
         }
     }).encode()))
+    mock_client.llen = AsyncMock(return_value=1)
     
     # Configure Redis connection and context manager
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
-    
-    # Add close method as AsyncMock
     mock_client.close = AsyncMock()
+    mock_client.connection_pool = AsyncMock()
     
     # Mock the from_url class method
     Redis.from_url = AsyncMock(return_value=mock_client)
     
     yield mock_client
-    # No need for cleanup in finally block as we've mocked the close method
+    
+    # Cleanup
+    await mock_client.close()
 
 @pytest.fixture
 def mock_telegram_bot():

@@ -48,8 +48,16 @@ async def process_queue():
 def run_worker():
     """Start the worker process."""
     try:
-        loop = asyncio.new_event_loop()
+        # Ensure we're using a fresh event loop for the worker process
+        if asyncio.get_event_loop().is_closed():
+            loop = asyncio.new_event_loop()
+        else:
+            loop = asyncio.get_event_loop()
+        
         asyncio.set_event_loop(loop)
+        # Set up proper exception handling for the event loop
+        loop.set_exception_handler(lambda loop, context: logger.error(f"Event loop error: {context}"))
+        
         loop.run_until_complete(process_queue())
     except KeyboardInterrupt:
         logger.info("Worker stopped by user")

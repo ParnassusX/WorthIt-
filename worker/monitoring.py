@@ -1,9 +1,10 @@
+from typing import Dict, Any, List
 import psutil
-from prometheus_client import Gauge, Histogram, Counter
+from prometheus_client import Gauge, Histogram, Counter, CollectorRegistry, REGISTRY
 import time
-from typing import Dict, Any
 import logging
 import json
+from .queue import get_redis_client
 
 # Configure logging with enhanced context
 def setup_logging():
@@ -15,33 +16,36 @@ def setup_logging():
     logger.info("Worker monitoring configured", extra={"setup": "initial"})
     return logger
 
+# Create a custom registry to avoid conflicts
+monitoring_registry = CollectorRegistry()
+
 # Prometheus metrics
-CPU_USAGE = Gauge('worker_cpu_usage', 'Current CPU usage percentage')
-MEMORY_USAGE = Gauge('worker_memory_usage', 'Current memory usage percentage')
-ACTIVE_WORKERS = Gauge('active_workers', 'Number of active worker processes')
+CPU_USAGE = Gauge('worker_cpu_usage', 'Current CPU usage percentage', registry=monitoring_registry)
+MEMORY_USAGE = Gauge('worker_memory_usage', 'Current memory usage percentage', registry=monitoring_registry)
+ACTIVE_WORKERS = Gauge('active_workers', 'Number of active worker processes', registry=monitoring_registry)
 
 # Service monitoring metrics
-HF_API_CALLS = Counter('hf_api_calls_total', 'Hugging Face API call count')
-HF_ERROR_RATE = Gauge('hf_error_rate', 'Hugging Face API error rate')
-HF_RESPONSE_TIME = Histogram('hf_response_time', 'Hugging Face API response time')
-APIFY_CALLS = Counter('apify_calls_total', 'Apify API call count')
-APIFY_ERROR_RATE = Gauge('apify_error_rate', 'Apify API error rate')
-APIFY_RESPONSE_TIME = Histogram('apify_response_time', 'Apify API response time')
+HF_API_CALLS = Counter('hf_api_calls_total', 'Hugging Face API call count', registry=monitoring_registry)
+HF_ERROR_RATE = Gauge('hf_error_rate', 'Hugging Face API error rate', registry=monitoring_registry)
+HF_RESPONSE_TIME = Histogram('hf_response_time', 'Hugging Face API response time', registry=monitoring_registry)
+APIFY_CALLS = Counter('apify_calls_total', 'Apify API call count', registry=monitoring_registry)
+APIFY_ERROR_RATE = Gauge('apify_error_rate', 'Apify API error rate', registry=monitoring_registry)
+APIFY_RESPONSE_TIME = Histogram('apify_response_time', 'Apify API response time', registry=monitoring_registry)
 
 # Cross-component metrics
-COMPONENT_HEALTH = Gauge('component_health', 'Component health status', ['component'])
-COMPONENT_LATENCY = Histogram('component_latency', 'Inter-component communication latency', ['source', 'destination'])
-QUEUE_SIZE = Gauge('queue_size', 'Current queue size', ['queue_name'])
+COMPONENT_HEALTH = Gauge('component_health', 'Component health status', ['component'], registry=monitoring_registry)
+COMPONENT_LATENCY = Histogram('component_latency', 'Inter-component communication latency', ['source', 'destination'], registry=monitoring_registry)
+QUEUE_SIZE = Gauge('queue_size', 'Current queue size', ['queue_name'], registry=monitoring_registry)
 
 # Performance metrics
-PROCESSING_TIME = Histogram('task_processing_time', 'Task processing time', ['task_type'])
-MEMORY_PER_TASK = Gauge('memory_per_task', 'Memory usage per task type', ['task_type'])
-TASK_THROUGHPUT = Counter('task_throughput_total', 'Number of tasks processed', ['task_type', 'status'])
+PROCESSING_TIME = Histogram('task_processing_time', 'Task processing time', ['task_type'], registry=monitoring_registry)
+MEMORY_PER_TASK = Gauge('memory_per_task', 'Memory usage per task type', ['task_type'], registry=monitoring_registry)
+TASK_THROUGHPUT = Counter('task_throughput_total', 'Number of tasks processed', ['task_type', 'status'], registry=monitoring_registry)
 
 # User interaction metrics
-USER_START_COMMANDS = Counter('user_start_commands_total', 'Number of /start commands received')
-USER_LINK_INTERACTIONS = Counter('user_link_interactions_total', 'Number of product links interacted with')
-USER_JOURNEY_STAGE = Histogram('user_journey_stage', 'Current stage in user interaction flow', ['stage'])
+USER_START_COMMANDS = Counter('user_start_commands_total', 'Number of /start commands received', registry=monitoring_registry)
+USER_LINK_INTERACTIONS = Counter('user_link_interactions_total', 'Number of product links interacted with', registry=monitoring_registry)
+USER_JOURNEY_STAGE = Histogram('user_journey_stage', 'Current stage in user interaction flow', ['stage'], registry=monitoring_registry)
 
 # Enhanced monitoring functions
 async def update_component_health(component: str, is_healthy: bool):
@@ -50,7 +54,13 @@ async def update_component_health(component: str, is_healthy: bool):
 
 async def track_component_latency(source: str, destination: str, duration: float):
     """Track latency between components"""
-    COMPONENT_LATENCY.labels(source=source, destination=destination).observe(duration)
+    try:
+        COMPONENT_LATENCY.labels(source=source, destination=destination).observe(duration)
+        logger.info(f"Component latency tracked",
+                  extra={'context': json.dumps({'source': source, 'destination': destination, 'duration': duration})})
+    except Exception as e:
+        logger.error(f"Error tracking component latency: {str(e)}",
+                    extra={'context': json.dumps({'error': str(e)})})
 
 async def update_queue_metrics(queue_name: str, size: int):
     """Update queue size metrics"""
@@ -58,9 +68,21 @@ async def update_queue_metrics(queue_name: str, size: int):
 
 async def track_task_metrics(task_type: str, duration: float, memory_usage: float, status: str):
     """Track comprehensive task metrics"""
-    PROCESSING_TIME.labels(task_type=task_type).observe(duration)
-    MEMORY_PER_TASK.labels(task_type=task_type).set(memory_usage)
-    TASK_THROUGHPUT.labels(task_type=task_type, status=status).inc()
+    try:
+        PROCESSING_TIME.labels(task_type=task_type).observe(duration)
+        MEMORY_PER_TASK.labels(task_type=task_type).set(memory_usage)
+        TASK_THROUGHPUT.labels(task_type=task_type, status=status).inc()
+        
+        logger.info(f"Task metrics tracked",
+                  extra={'context': json.dumps({
+                      'task_type': task_type,
+                      'duration': duration,
+                      'memory_usage': memory_usage,
+                      'status': status
+                  })})
+    except Exception as e:
+        logger.error(f"Error tracking task metrics: {str(e)}",
+                    extra={'context': json.dumps({'error': str(e)})})
 
 async def track_user_interaction(interaction_type: str, stage: str = None):
     """Track user interaction metrics"""
@@ -266,6 +288,76 @@ def track_performance_metrics(task_type: str, start_time: float):
 
 # Helper functions
 
+async def update_task_status(task_id: str, status: str, context: Dict[str, Any] = None):
+    """Update task status and track metrics"""
+    try:
+        TASK_THROUGHPUT.labels(task_type=status, status='success').inc()
+        if context:
+            logger.info(f"Task {task_id} status updated to {status}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error updating task status: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+async def log_task_lifecycle(task_id: str, event: str, context: Dict[str, Any] = None):
+    """Log task lifecycle events with metrics tracking"""
+    try:
+        if context:
+            logger.info(f"Task {task_id} lifecycle event: {event}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error logging task lifecycle: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+class AlertingSystem:
+    def __init__(self):
+        self.logger
+
+async def get_task_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent task processing history"""
+    try:
+        # For now, return a simple list of recent task metrics
+        tasks = []
+        for sample in TASK_THROUGHPUT._metrics:
+            task_type = sample.labels.get('task_type', 'unknown')
+            status = sample.labels.get('status', 'unknown')
+            count = sample.value
+            tasks.append({
+                'task_type': task_type,
+                'status': status,
+                'count': count
+            })
+        return tasks[:limit]
+    except Exception as e:
+        logger.error(f"Error getting task history: {str(e)}")
+        return []
+
+async def get_worker_health() -> Dict[str, Any]:
+    """Get current worker health metrics"""
+    try:
+        return {
+            'cpu_usage': CPU_USAGE._value.get(),
+            'memory_usage': MEMORY_USAGE._value.get(),
+            'active_workers': ACTIVE_WORKERS._value.get(),
+            'component_health': {
+                component: COMPONENT_HEALTH.labels(component=component)._value.get()
+                for component in ['api', 'worker', 'bot']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker health: {str(e)}")
+        return {}
+
+async def check_redis_connection() -> bool:
+    """Check Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {str(e)}")
+        return False
+
 class AlertingSystem:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -425,6 +517,55 @@ class AlertingSystem:
                 "Failed to notify on-call team",
                 extra={'context': json.dumps({'error': str(e), **context})}
             )
+
+class AlertingSystem:
+    def __init__(self):
+        self.logger
+
+async def get_task_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent task processing history"""
+    try:
+        # For now, return a simple list of recent task metrics
+        tasks = []
+        for sample in TASK_THROUGHPUT._metrics:
+            task_type = sample.labels.get('task_type', 'unknown')
+            status = sample.labels.get('status', 'unknown')
+            count = sample.value
+            tasks.append({
+                'task_type': task_type,
+                'status': status,
+                'count': count
+            })
+        return tasks[:limit]
+    except Exception as e:
+        logger.error(f"Error getting task history: {str(e)}")
+        return []
+
+async def get_worker_health() -> Dict[str, Any]:
+    """Get current worker health metrics"""
+    try:
+        return {
+            'cpu_usage': CPU_USAGE._value.get(),
+            'memory_usage': MEMORY_USAGE._value.get(),
+            'active_workers': ACTIVE_WORKERS._value.get(),
+            'component_health': {
+                component: COMPONENT_HEALTH.labels(component=component)._value.get()
+                for component in ['api', 'worker', 'bot']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker health: {str(e)}")
+        return {}
+
+async def check_redis_connection() -> bool:
+    """Check Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {str(e)}")
+        return False
 
 class AlertingSystem:
     def __init__(self):
@@ -591,13 +732,13 @@ RESOURCE_REGISTRY = CollectorRegistry()
 
 # Predictive monitoring metrics
 RESOURCE_PREDICTION = Gauge('resource_prediction', 'Predicted resource usage', ['resource_type', 'timeframe'], registry=RESOURCE_REGISTRY)
-ANOMALY_SCORE = Gauge('anomaly_score', 'System anomaly score', ['component'])
-CAPACITY_THRESHOLD = Gauge('capacity_threshold', 'Dynamic capacity threshold', ['resource_type'])
+ANOMALY_SCORE = Gauge('anomaly_score', 'System anomaly score', ['component'], registry=RESOURCE_REGISTRY)
+CAPACITY_THRESHOLD = Gauge('capacity_threshold', 'Dynamic capacity threshold', ['resource_type'], registry=RESOURCE_REGISTRY)
 
 # Capacity planning metrics
-RESOURCE_TREND = Gauge('resource_trend', 'Resource usage trend', ['resource_type', 'window'])
-SCALING_RECOMMENDATION = Gauge('scaling_recommendation', 'Recommended scaling factor', ['component'])
-RESOURCE_EFFICIENCY = Gauge('resource_efficiency', 'Resource utilization efficiency', ['resource_type'])
+RESOURCE_TREND = Gauge('resource_trend', 'Resource usage trend', ['resource_type', 'window'], registry=RESOURCE_REGISTRY)
+SCALING_RECOMMENDATION = Gauge('scaling_recommendation', 'Recommended scaling factor', ['component'], registry=RESOURCE_REGISTRY)
+RESOURCE_EFFICIENCY = Gauge('resource_efficiency', 'Resource utilization efficiency', ['resource_type'], registry=RESOURCE_REGISTRY)
 
 async def update_predictive_metrics(resource_type: str, current_usage: float, historical_data: list):
     """Update predictive monitoring metrics based on historical data"""
@@ -844,6 +985,76 @@ def track_performance_metrics(task_type: str, start_time: float):
 
 # Helper functions
 
+async def update_task_status(task_id: str, status: str, context: Dict[str, Any] = None):
+    """Update task status and track metrics"""
+    try:
+        TASK_THROUGHPUT.labels(task_type=status, status='success').inc()
+        if context:
+            logger.info(f"Task {task_id} status updated to {status}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error updating task status: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+async def log_task_lifecycle(task_id: str, event: str, context: Dict[str, Any] = None):
+    """Log task lifecycle events with metrics tracking"""
+    try:
+        if context:
+            logger.info(f"Task {task_id} lifecycle event: {event}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error logging task lifecycle: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+class AlertingSystem:
+    def __init__(self):
+        self.logger
+
+async def get_task_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent task processing history"""
+    try:
+        # For now, return a simple list of recent task metrics
+        tasks = []
+        for sample in TASK_THROUGHPUT._metrics:
+            task_type = sample.labels.get('task_type', 'unknown')
+            status = sample.labels.get('status', 'unknown')
+            count = sample.value
+            tasks.append({
+                'task_type': task_type,
+                'status': status,
+                'count': count
+            })
+        return tasks[:limit]
+    except Exception as e:
+        logger.error(f"Error getting task history: {str(e)}")
+        return []
+
+async def get_worker_health() -> Dict[str, Any]:
+    """Get current worker health metrics"""
+    try:
+        return {
+            'cpu_usage': CPU_USAGE._value.get(),
+            'memory_usage': MEMORY_USAGE._value.get(),
+            'active_workers': ACTIVE_WORKERS._value.get(),
+            'component_health': {
+                component: COMPONENT_HEALTH.labels(component=component)._value.get()
+                for component in ['api', 'worker', 'bot']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker health: {str(e)}")
+        return {}
+
+async def check_redis_connection() -> bool:
+    """Check Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {str(e)}")
+        return False
+
 class AlertingSystem:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -1003,6 +1214,55 @@ class AlertingSystem:
                 "Failed to notify on-call team",
                 extra={'context': json.dumps({'error': str(e), **context})}
             )
+
+class AlertingSystem:
+    def __init__(self):
+        self.logger
+
+async def get_task_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent task processing history"""
+    try:
+        # For now, return a simple list of recent task metrics
+        tasks = []
+        for sample in TASK_THROUGHPUT._metrics:
+            task_type = sample.labels.get('task_type', 'unknown')
+            status = sample.labels.get('status', 'unknown')
+            count = sample.value
+            tasks.append({
+                'task_type': task_type,
+                'status': status,
+                'count': count
+            })
+        return tasks[:limit]
+    except Exception as e:
+        logger.error(f"Error getting task history: {str(e)}")
+        return []
+
+async def get_worker_health() -> Dict[str, Any]:
+    """Get current worker health metrics"""
+    try:
+        return {
+            'cpu_usage': CPU_USAGE._value.get(),
+            'memory_usage': MEMORY_USAGE._value.get(),
+            'active_workers': ACTIVE_WORKERS._value.get(),
+            'component_health': {
+                component: COMPONENT_HEALTH.labels(component=component)._value.get()
+                for component in ['api', 'worker', 'bot']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker health: {str(e)}")
+        return {}
+
+async def check_redis_connection() -> bool:
+    """Check Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {str(e)}")
+        return False
 
 class AlertingSystem:
     def __init__(self):
@@ -1169,13 +1429,13 @@ RESOURCE_REGISTRY = CollectorRegistry()
 
 # Predictive monitoring metrics
 RESOURCE_PREDICTION = Gauge('resource_prediction', 'Predicted resource usage', ['resource_type', 'timeframe'], registry=RESOURCE_REGISTRY)
-ANOMALY_SCORE = Gauge('anomaly_score', 'System anomaly score', ['component'])
-CAPACITY_THRESHOLD = Gauge('capacity_threshold', 'Dynamic capacity threshold', ['resource_type'])
+ANOMALY_SCORE = Gauge('anomaly_score', 'System anomaly score', ['component'], registry=RESOURCE_REGISTRY)
+CAPACITY_THRESHOLD = Gauge('capacity_threshold', 'Dynamic capacity threshold', ['resource_type'], registry=RESOURCE_REGISTRY)
 
 # Capacity planning metrics
-RESOURCE_TREND = Gauge('resource_trend', 'Resource usage trend', ['resource_type', 'window'])
-SCALING_RECOMMENDATION = Gauge('scaling_recommendation', 'Recommended scaling factor', ['component'])
-RESOURCE_EFFICIENCY = Gauge('resource_efficiency', 'Resource utilization efficiency', ['resource_type'])
+RESOURCE_TREND = Gauge('resource_trend', 'Resource usage trend', ['resource_type', 'window'], registry=RESOURCE_REGISTRY)
+SCALING_RECOMMENDATION = Gauge('scaling_recommendation', 'Recommended scaling factor', ['component'], registry=RESOURCE_REGISTRY)
+RESOURCE_EFFICIENCY = Gauge('resource_efficiency', 'Resource utilization efficiency', ['resource_type'], registry=RESOURCE_REGISTRY)
 
 async def update_predictive_metrics(resource_type: str, current_usage: float, historical_data: list):
     """Update predictive monitoring metrics based on historical data"""
@@ -1422,6 +1682,76 @@ def track_performance_metrics(task_type: str, start_time: float):
 
 # Helper functions
 
+async def update_task_status(task_id: str, status: str, context: Dict[str, Any] = None):
+    """Update task status and track metrics"""
+    try:
+        TASK_THROUGHPUT.labels(task_type=status, status='success').inc()
+        if context:
+            logger.info(f"Task {task_id} status updated to {status}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error updating task status: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+async def log_task_lifecycle(task_id: str, event: str, context: Dict[str, Any] = None):
+    """Log task lifecycle events with metrics tracking"""
+    try:
+        if context:
+            logger.info(f"Task {task_id} lifecycle event: {event}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error logging task lifecycle: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+class AlertingSystem:
+    def __init__(self):
+        self.logger
+
+async def get_task_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent task processing history"""
+    try:
+        # For now, return a simple list of recent task metrics
+        tasks = []
+        for sample in TASK_THROUGHPUT._metrics:
+            task_type = sample.labels.get('task_type', 'unknown')
+            status = sample.labels.get('status', 'unknown')
+            count = sample.value
+            tasks.append({
+                'task_type': task_type,
+                'status': status,
+                'count': count
+            })
+        return tasks[:limit]
+    except Exception as e:
+        logger.error(f"Error getting task history: {str(e)}")
+        return []
+
+async def get_worker_health() -> Dict[str, Any]:
+    """Get current worker health metrics"""
+    try:
+        return {
+            'cpu_usage': CPU_USAGE._value.get(),
+            'memory_usage': MEMORY_USAGE._value.get(),
+            'active_workers': ACTIVE_WORKERS._value.get(),
+            'component_health': {
+                component: COMPONENT_HEALTH.labels(component=component)._value.get()
+                for component in ['api', 'worker', 'bot']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker health: {str(e)}")
+        return {}
+
+async def check_redis_connection() -> bool:
+    """Check Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {str(e)}")
+        return False
+
 class AlertingSystem:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -1584,6 +1914,55 @@ class AlertingSystem:
 
 class AlertingSystem:
     def __init__(self):
+        self.logger
+
+async def get_task_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent task processing history"""
+    try:
+        # For now, return a simple list of recent task metrics
+        tasks = []
+        for sample in TASK_THROUGHPUT._metrics:
+            task_type = sample.labels.get('task_type', 'unknown')
+            status = sample.labels.get('status', 'unknown')
+            count = sample.value
+            tasks.append({
+                'task_type': task_type,
+                'status': status,
+                'count': count
+            })
+        return tasks[:limit]
+    except Exception as e:
+        logger.error(f"Error getting task history: {str(e)}")
+        return []
+
+async def get_worker_health() -> Dict[str, Any]:
+    """Get current worker health metrics"""
+    try:
+        return {
+            'cpu_usage': CPU_USAGE._value.get(),
+            'memory_usage': MEMORY_USAGE._value.get(),
+            'active_workers': ACTIVE_WORKERS._value.get(),
+            'component_health': {
+                component: COMPONENT_HEALTH.labels(component=component)._value.get()
+                for component in ['api', 'worker', 'bot']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker health: {str(e)}")
+        return {}
+
+async def check_redis_connection() -> bool:
+    """Check Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {str(e)}")
+        return False
+
+class AlertingSystem:
+    def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.alert_counter = Counter('alerts_total', 'Total number of alerts triggered', ['severity', 'type'])
         self.incident_duration = Histogram('incident_duration_seconds', 'Duration of incidents until resolution')
@@ -1741,18 +2120,13 @@ class AlertingSystem:
                 "Failed to notify on-call team",
                 extra={'context': json.dumps({'error': str(e), **context})}
             )
-
-# Predictive monitoring metrics
-RESOURCE_PREDICTION = Gauge('resource_prediction', 'Predicted resource usage', ['resource_type', 'time_window'])
-CAPACITY_THRESHOLD = Gauge('capacity_threshold', 'Resource capacity thresholds', ['resource_type'])
-ANOMALY_SCORE = Gauge('anomaly_score', 'System behavior anomaly score', ['component'])
 
 async def predict_resource_usage(resource_type: str, time_window: str):
     """Predict future resource usage based on historical data"""
     current_usage = CPU_USAGE.collect()[0].samples[0].value if resource_type == 'cpu' else MEMORY_USAGE.collect()[0].samples[0].value
     # Simple moving average prediction for now
     predicted_usage = current_usage * 1.1  # Add 10% buffer
-    RESOURCE_PREDICTION.labels(resource_type=resource_type, time_window=time_window).set(predicted_usage)
+    RESOURCE_PREDICTION.labels(resource_type=resource_type, timeframe=time_window).set(predicted_usage)
 
 async def update_capacity_thresholds(resource_type: str, current_usage: float):
     """Dynamically update capacity thresholds based on usage patterns"""
@@ -1944,6 +2318,76 @@ def track_performance_metrics(task_type: str, start_time: float):
 
 # Helper functions
 
+async def update_task_status(task_id: str, status: str, context: Dict[str, Any] = None):
+    """Update task status and track metrics"""
+    try:
+        TASK_THROUGHPUT.labels(task_type=status, status='success').inc()
+        if context:
+            logger.info(f"Task {task_id} status updated to {status}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error updating task status: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+async def log_task_lifecycle(task_id: str, event: str, context: Dict[str, Any] = None):
+    """Log task lifecycle events with metrics tracking"""
+    try:
+        if context:
+            logger.info(f"Task {task_id} lifecycle event: {event}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error logging task lifecycle: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+class AlertingSystem:
+    def __init__(self):
+        self.logger
+
+async def get_task_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent task processing history"""
+    try:
+        # For now, return a simple list of recent task metrics
+        tasks = []
+        for sample in TASK_THROUGHPUT._metrics:
+            task_type = sample.labels.get('task_type', 'unknown')
+            status = sample.labels.get('status', 'unknown')
+            count = sample.value
+            tasks.append({
+                'task_type': task_type,
+                'status': status,
+                'count': count
+            })
+        return tasks[:limit]
+    except Exception as e:
+        logger.error(f"Error getting task history: {str(e)}")
+        return []
+
+async def get_worker_health() -> Dict[str, Any]:
+    """Get current worker health metrics"""
+    try:
+        return {
+            'cpu_usage': CPU_USAGE._value.get(),
+            'memory_usage': MEMORY_USAGE._value.get(),
+            'active_workers': ACTIVE_WORKERS._value.get(),
+            'component_health': {
+                component: COMPONENT_HEALTH.labels(component=component)._value.get()
+                for component in ['api', 'worker', 'bot']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker health: {str(e)}")
+        return {}
+
+async def check_redis_connection() -> bool:
+    """Check Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {str(e)}")
+        return False
+
 class AlertingSystem:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -2106,6 +2550,55 @@ class AlertingSystem:
 
 class AlertingSystem:
     def __init__(self):
+        self.logger
+
+async def get_task_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent task processing history"""
+    try:
+        # For now, return a simple list of recent task metrics
+        tasks = []
+        for sample in TASK_THROUGHPUT._metrics:
+            task_type = sample.labels.get('task_type', 'unknown')
+            status = sample.labels.get('status', 'unknown')
+            count = sample.value
+            tasks.append({
+                'task_type': task_type,
+                'status': status,
+                'count': count
+            })
+        return tasks[:limit]
+    except Exception as e:
+        logger.error(f"Error getting task history: {str(e)}")
+        return []
+
+async def get_worker_health() -> Dict[str, Any]:
+    """Get current worker health metrics"""
+    try:
+        return {
+            'cpu_usage': CPU_USAGE._value.get(),
+            'memory_usage': MEMORY_USAGE._value.get(),
+            'active_workers': ACTIVE_WORKERS._value.get(),
+            'component_health': {
+                component: COMPONENT_HEALTH.labels(component=component)._value.get()
+                for component in ['api', 'worker', 'bot']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker health: {str(e)}")
+        return {}
+
+async def check_redis_connection() -> bool:
+    """Check Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {str(e)}")
+        return False
+
+class AlertingSystem:
+    def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.alert_counter = Counter('alerts_total', 'Total number of alerts triggered', ['severity', 'type'])
         self.incident_duration = Histogram('incident_duration_seconds', 'Duration of incidents until resolution')
@@ -2263,18 +2756,13 @@ class AlertingSystem:
                 "Failed to notify on-call team",
                 extra={'context': json.dumps({'error': str(e), **context})}
             )
-
-# Predictive monitoring metrics
-RESOURCE_PREDICTION = Gauge('resource_prediction', 'Predicted resource usage', ['resource_type', 'time_window'])
-CAPACITY_THRESHOLD = Gauge('capacity_threshold', 'Resource capacity thresholds', ['resource_type'])
-ANOMALY_SCORE = Gauge('anomaly_score', 'System behavior anomaly score', ['component'])
 
 async def predict_resource_usage(resource_type: str, time_window: str):
     """Predict future resource usage based on historical data"""
     current_usage = CPU_USAGE.collect()[0].samples[0].value if resource_type == 'cpu' else MEMORY_USAGE.collect()[0].samples[0].value
     # Simple moving average prediction for now
     predicted_usage = current_usage * 1.1  # Add 10% buffer
-    RESOURCE_PREDICTION.labels(resource_type=resource_type, time_window=time_window).set(predicted_usage)
+    RESOURCE_PREDICTION.labels(resource_type=resource_type, timeframe=time_window).set(predicted_usage)
 
 async def update_capacity_thresholds(resource_type: str, current_usage: float):
     """Dynamically update capacity thresholds based on usage patterns"""
@@ -2465,6 +2953,76 @@ def track_performance_metrics(task_type: str, start_time: float):
     TASK_THROUGHPUT.labels(task_type=task_type, status="completed").inc()
 
 # Helper functions
+
+async def update_task_status(task_id: str, status: str, context: Dict[str, Any] = None):
+    """Update task status and track metrics"""
+    try:
+        TASK_THROUGHPUT.labels(task_type=status, status='success').inc()
+        if context:
+            logger.info(f"Task {task_id} status updated to {status}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error updating task status: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+async def log_task_lifecycle(task_id: str, event: str, context: Dict[str, Any] = None):
+    """Log task lifecycle events with metrics tracking"""
+    try:
+        if context:
+            logger.info(f"Task {task_id} lifecycle event: {event}",
+                      extra={'context': json.dumps(context)})
+    except Exception as e:
+        logger.error(f"Error logging task lifecycle: {str(e)}",
+                    extra={'context': json.dumps({'task_id': task_id, 'error': str(e)})})
+
+class AlertingSystem:
+    def __init__(self):
+        self.logger
+
+async def get_task_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent task processing history"""
+    try:
+        # For now, return a simple list of recent task metrics
+        tasks = []
+        for sample in TASK_THROUGHPUT._metrics:
+            task_type = sample.labels.get('task_type', 'unknown')
+            status = sample.labels.get('status', 'unknown')
+            count = sample.value
+            tasks.append({
+                'task_type': task_type,
+                'status': status,
+                'count': count
+            })
+        return tasks[:limit]
+    except Exception as e:
+        logger.error(f"Error getting task history: {str(e)}")
+        return []
+
+async def get_worker_health() -> Dict[str, Any]:
+    """Get current worker health metrics"""
+    try:
+        return {
+            'cpu_usage': CPU_USAGE._value.get(),
+            'memory_usage': MEMORY_USAGE._value.get(),
+            'active_workers': ACTIVE_WORKERS._value.get(),
+            'component_health': {
+                component: COMPONENT_HEALTH.labels(component=component)._value.get()
+                for component in ['api', 'worker', 'bot']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker health: {str(e)}")
+        return {}
+
+async def check_redis_connection() -> bool:
+    """Check Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {str(e)}")
+        return False
 
 class AlertingSystem:
     def __init__(self):

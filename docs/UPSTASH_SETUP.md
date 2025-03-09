@@ -4,9 +4,9 @@
 WorthIt! uses Upstash Redis for its serverless-compatible caching and data storage needs. This guide explains how to set up and configure Upstash Redis for the project.
 
 ## Why Upstash Redis?
-- **Serverless-First**: Built specifically for serverless environments like Vercel
+- **Serverless-First**: Built specifically for serverless environments like Netlify
 - **Global Database**: Automatic replication across regions for low latency
-- **Simple Integration**: Direct integration with Vercel and other platforms
+- **Simple Integration**: Direct integration with Netlify and other platforms
 - **REST API Support**: HTTP-based access when TCP connections are problematic
 
 ## Setup Instructions
@@ -15,7 +15,7 @@ WorthIt! uses Upstash Redis for its serverless-compatible caching and data stora
 1. Go to [Upstash Console](https://console.upstash.com/)
 2. Sign up or log in
 3. Click "Create Database"
-4. Choose the region closest to your Vercel deployment
+4. Choose the region closest to your Netlify deployment
 5. Select your preferred plan (Free tier is sufficient for development)
 
 ### 2. Get Connection Details

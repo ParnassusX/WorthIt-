@@ -11,7 +11,7 @@ This document outlines the hybrid architecture approach for the WorthIt! Telegra
 **Purpose:** Handle immediate user interactions and simple commands
 
 **Implementation:**
-- Deployed on Vercel (serverless)
+- Deployed on Netlify (serverless)
 - Responds quickly to user messages
 - Delegates complex tasks to background workers
 - Returns immediate acknowledgments to users
@@ -79,7 +79,7 @@ Choose a message queue solution based on your scaling needs:
 
 ### Step 4: Deploy Both Components
 
-1. Deploy the webhook handler on Vercel
+1. Deploy the webhook handler on Netlify
 2. Deploy the background worker on a suitable platform:
    - Virtual machine (DigitalOcean, AWS EC2)
    - Container service (AWS ECS, Google Cloud Run)
@@ -89,7 +89,7 @@ Choose a message queue solution based on your scaling needs:
 
 ### Webhook Handler Scaling
 
-- Automatically scales with Vercel's serverless platform
+- Automatically scales with Netlify's serverless platform
 - No manual scaling needed
 - Cost-effective for variable loads
 

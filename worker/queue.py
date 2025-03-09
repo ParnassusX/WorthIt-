@@ -13,17 +13,10 @@ from .redis_manager import get_redis_client, get_redis_manager
 
 class TaskQueue:
     def __init__(self):
-        self.redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+        from worker.redis_manager import get_redis_manager
         self.queue_name = 'worthit_tasks'
         self.redis = None
-        self.max_retries = 3
-        self.retry_delay = 2
-        self._cleanup_task = None
-        self._is_shutting_down = False
-        self._connection_pool = None
-        self._health_check_task = None
-        self._last_health_check = 0
-        self._connection_errors = 0
+        self._redis_manager = get_redis_manager()
     
     async def _cleanup_stale_connections(self):
         """Periodically cleanup stale connections with improved error handling"""
@@ -58,69 +51,22 @@ class TaskQueue:
                 await asyncio.sleep(5)  # Short delay before retry
 
     async def connect(self):
-        """Connect to Redis with enhanced connection pooling"""
+        """Get Redis connection from the centralized manager"""
         if self.redis is None:
             try:
-                if "upstash" in self.redis_url and not self.redis_url.startswith("rediss://"):
-                    self.redis_url = self.redis_url.replace("redis://", "rediss://")
-                
-                ssl_enabled = "upstash" in self.redis_url
-                pool_settings = {
-                    "max_connections": 20,
-                    "max_idle_time": 300,
-                    "retry_on_timeout": True,
-                    "health_check_interval": 30
-                }
-                
-                if ssl_enabled:
-                    pool_settings.update({
-                        "ssl_cert_reqs": None,
-                        "ssl_check_hostname": False,
-                        "retry_on_error": [TimeoutError, ConnectionError]
-                    })
-                
-                self._connection_pool = await Redis.from_url(
-                    self.redis_url,
-                    decode_responses=False,
-                    socket_timeout=5.0,
-                    socket_connect_timeout=5.0,
-                    socket_keepalive=True,
-                    **pool_settings
-                )
-                
-                self.redis = self._connection_pool
-                await self.redis.ping()
-                
-                # Start connection cleanup and health check tasks
-                if not self._cleanup_task:
-                    self._cleanup_task = asyncio.create_task(self._cleanup_stale_connections())
-                if not self._health_check_task:
-                    self._health_check_task = asyncio.create_task(self._health_check())
-                
-                logger.info("Successfully connected to Redis with connection pooling")
+                self.redis = await self._redis_manager.get_client()
+                logger.info("Successfully connected to Redis using connection manager")
             except Exception as e:
-                logger.error(f"Redis connection error: {e}")
+                logger.error(f"Failed to connect to Redis: {str(e)}")
                 self.redis = None
                 raise
         return self.redis
     
     async def shutdown(self):
-        """Gracefully shutdown Redis connections"""
-        self._is_shutting_down = True
-        
-        # Cancel cleanup and health check tasks
-        for task in [self._cleanup_task, self._health_check_task]:
-            if task:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-        
-        if self._connection_pool:
-            await self._connection_pool.disconnect(inuse_connections=True)
-            self._connection_pool = None
-        self.redis = None
+        """Release Redis connection"""
+        if self.redis:
+            await self._redis_manager.release_connection(self.redis)
+            self.redis = None
     
     def __del__(self):
         """Ensure cleanup when object is destroyed"""

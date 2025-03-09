@@ -44,9 +44,15 @@ if not redis_url:
 print(f"\n=== Redis URL Analysis ===")
 print(f"Original URL: {redis_url}")
 
+# Check if this is an Upstash URL and convert if needed
+original_url = redis_url
+if 'upstash' in redis_url and not redis_url.startswith('rediss://'):
+    redis_url = redis_url.replace('redis://', 'rediss://')
+    print(f"URL converted for SSL: {redis_url}")
+
 try:
-    # Handle redis:// URL format
-    if redis_url.startswith("redis://"):
+    # Handle redis:// or rediss:// URL format
+    if redis_url.startswith("redis://") or redis_url.startswith("rediss://"):
         parsed = urllib.parse.urlparse(redis_url)
         password = None
         if '@' in parsed.netloc:

@@ -30,11 +30,36 @@ def test_redis():
         print("Error: REDIS_URL not found in .env.test")
         return False
     
+    # Store original URL before any modifications
+    original_url = redis_url
+    
+    # Check if this is an Upstash URL and convert if needed
+    if 'upstash' in redis_url and not redis_url.startswith('rediss://'):
+        redis_url = redis_url.replace('redis://', 'rediss://')
+        print(f"URL converted for SSL: {redis_url}")
+    
     print(f"Testing Redis connection to {redis_url}")
+    
+    # Prepare connection settings
+    connection_settings = {
+        "decode_responses": True,
+        "socket_timeout": 15.0,
+        "socket_connect_timeout": 10.0,
+        "retry_on_timeout": True,
+        "health_check_interval": 60
+    }
+    
+    # Add Upstash-specific settings
+    if 'upstash' in redis_url:
+        connection_settings.update({
+            "socket_timeout": 30.0,
+            "socket_connect_timeout": 20.0,
+            "retry_on_timeout": True
+        })
     
     try:
         # Create Redis client
-        r = redis.from_url(redis_url)
+        r = redis.from_url(redis_url, **connection_settings)
         
         # Test connection with PING
         if r.ping():
@@ -53,7 +78,9 @@ def test_redis():
             value = r.get(test_key)
             r.delete(test_key)
             
-            if value == b"test_value":
+            # Check value based on decode_responses setting
+            expected = "test_value" if connection_settings.get("decode_responses") else b"test_value"
+            if value == expected:
                 print("✅ Redis read/write operations successful")
             else:
                 print("❌ Redis read/write operations failed")
@@ -145,43 +172,43 @@ def test_redis():
             print(f"❌ Error parsing or connecting to Redis URL: {e}")
             return False
 
-def test_vercel():
-    """Test Vercel CLI"""
-    print("Testing Vercel CLI...")
+def test_netlify():
+    """Test Netlify CLI"""
+    print("Testing Netlify CLI...")
     try:
-        # Check if Vercel CLI is installed
+        # Check if Netlify CLI is installed
         result = subprocess.run(
-            ["npx", "--yes", "vercel", "--version"],
+            ["npx", "--yes", "netlify", "--version"],
             capture_output=True,
             text=True
         )
         
         if result.returncode == 0:
-            print(f"✅ Vercel CLI available: {result.stdout.strip()}")
+            print(f"✅ Netlify CLI available: {result.stdout.strip()}")
             
-            # Test project info (doesn't require authentication for public projects)
-            print("\nChecking project deployment status:")
+            # Test site status (doesn't require authentication for public sites)
+            print("\nChecking site deployment status:")
             webhook_url = os.getenv("WEBHOOK_URL", "")
-            project_name = webhook_url.split("/")[2].split(".")[0] if webhook_url else "worth-it-bot"
+            site_name = webhook_url.split("/")[2].split(".")[0] if webhook_url else "worth-it-app"
             
             result = subprocess.run(
-                ["npx", "--yes", "vercel", "inspect", project_name],
+                ["npx", "--yes", "netlify", "status"],
                 capture_output=True,
                 text=True
             )
             
             if result.returncode == 0:
-                print(f"✅ Project '{project_name}' info retrieved successfully")
+                print(f"✅ Netlify site status retrieved successfully")
                 return True
             else:
-                print(f"❌ Could not retrieve project info: {result.stderr}")
-                print("Note: This may require authentication. Run 'npx vercel login' first.")
+                print(f"❌ Could not retrieve site status: {result.stderr}")
+                print("Note: This may require authentication. Run 'npx netlify login' first.")
                 return False
         else:
-            print(f"❌ Vercel CLI not available: {result.stderr}")
+            print(f"❌ Netlify CLI not available: {result.stderr}")
             return False
     except Exception as e:
-        print(f"❌ Error testing Vercel: {e}")
+        print(f"❌ Error testing Netlify: {e}")
         return False
 
 def test_render():
@@ -290,7 +317,7 @@ def main():
     parser = argparse.ArgumentParser(description="Test WorthIt! services using CLI tools")
     parser.add_argument("--all", action="store_true", help="Test all services")
     parser.add_argument("--redis", action="store_true", help="Test Redis connection")
-    parser.add_argument("--vercel", action="store_true", help="Test Vercel CLI")
+    parser.add_argument("--netlify", action="store_true", help="Test Netlify CLI")
     parser.add_argument("--render", action="store_true", help="Test Render.com API")
     parser.add_argument("--hf", action="store_true", help="Test Hugging Face API token")
     parser.add_argument("--apify", action="store_true", help="Test Apify API token")
@@ -308,8 +335,8 @@ def main():
     if args.all or args.redis:
         results["Redis"] = test_redis()
     
-    if args.all or args.vercel:
-        results["Vercel"] = test_vercel()
+    if args.all or args.netlify:
+        results["Netlify"] = test_netlify()
     
     if args.all or args.render:
         results["Render"] = test_render()
