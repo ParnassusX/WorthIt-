@@ -38,7 +38,7 @@ echo.
 set /p COMMIT_MSG="Enter commit message (or press Enter for default message): "
 
 :: Use default message if none provided
-if "%COMMIT_MSG%"=="" set COMMIT_MSG="Update WorthIt! project files"
+if "%COMMIT_MSG%"=="" set COMMIT_MSG=Update WorthIt! project files
 
 :: Add all changes
 echo.
@@ -48,6 +48,7 @@ git add .
 :: Commit changes
 echo.
 echo Committing changes with message: %COMMIT_MSG%
+:: Use proper quoting for the commit message
 git commit -m "%COMMIT_MSG%"
 
 :: Check if commit was successful
@@ -61,9 +62,11 @@ if %ERRORLEVEL% neq 0 (
 :: Get current branch name
 echo.
 echo Getting current branch name...
-for /f "tokens=2" %%a in ('git branch --show-current') do set BRANCH_NAME=%%a
+for /f "usebackq" %%a in (`git branch --show-current`) do set BRANCH_NAME=%%a
 if "%BRANCH_NAME%"=="" (
-    for /f "tokens=2 delims= " %%a in ('git branch') do set BRANCH_NAME=%%a
+    :: Fallback method if --show-current doesn't work
+    for /f "usebackq tokens=2 delims=* " %%a in (`git branch ^| findstr /b "*"`) do set BRANCH_NAME=%%a
+    set BRANCH_NAME=%BRANCH_NAME:~1%
 )
 
 :: Push to remote repository

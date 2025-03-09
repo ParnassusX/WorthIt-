@@ -18,9 +18,21 @@ jobs:
       - name: Run tests
         run: |
           pytest tests/
-      # Placeholder for deployment step
-      # In a real implementation, you would add deployment to Vercel or another platform
-      - name: Deploy placeholder
+      # Deploy to Netlify
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+      - name: Install Netlify CLI
+        run: npm install -g netlify-cli
+      - name: Build web app
         run: |
-          echo "Deployment would happen here"
-          echo "In a real implementation, you would use vercel-action or similar"
+          cd web-app
+          npm install
+          npm run build
+      - name: Deploy to Netlify
+        run: |
+          netlify deploy --prod --dir=web-app/dist
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
