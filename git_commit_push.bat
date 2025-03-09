@@ -48,7 +48,7 @@ git add .
 :: Commit changes
 echo.
 echo Committing changes with message: %COMMIT_MSG%
-git commit -m %COMMIT_MSG%
+git commit -m "%COMMIT_MSG%"
 
 :: Check if commit was successful
 if %ERRORLEVEL% neq 0 (
