@@ -58,10 +58,18 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
+:: Get current branch name
+echo.
+echo Getting current branch name...
+for /f "tokens=2" %%a in ('git branch --show-current') do set BRANCH_NAME=%%a
+if "%BRANCH_NAME%"=="" (
+    for /f "tokens=2 delims= " %%a in ('git branch') do set BRANCH_NAME=%%a
+)
+
 :: Push to remote repository
 echo.
 echo Pushing changes to remote repository...
-git push
+git push --set-upstream origin %BRANCH_NAME%
 
 :: Check if push was successful
 if %ERRORLEVEL% neq 0 (
