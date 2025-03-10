@@ -8,7 +8,7 @@
     "build": "cd web-app && npm run build",
     "deploy": "netlify deploy --prod",
     "deploy:netlify": "cd web-app && npm run build && netlify deploy --prod",
-    "postinstall": "cd web-app && npm install"
+    "postinstall": "cd web-app && npm install --prefer-offline --no-audit --progress=false"
   },
   "author": "",
   "license": "ISC",

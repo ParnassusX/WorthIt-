@@ -42,7 +42,11 @@ if %ERRORLEVEL% neq 0 (
 echo.
 echo Building web app...
 cd web-app
-npm install
+
+:: Use memory-optimized npm install
+echo Using memory-optimized npm install...
+set NODE_OPTIONS=--max_old_space_size=2048
+npm install --prefer-offline --no-audit --progress=false
 npm run build
 if %ERRORLEVEL% neq 0 (
     echo.

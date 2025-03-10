@@ -1,10 +1,12 @@
 [build]
-command = "pip install -r requirements.txt"
-publish = "web-app"
+command = "pip install -r requirements.txt && npm ci"
+publish = "web-app/dist"
 functions = "netlify/functions"
 
 [build.environment]
 PYTHON_VERSION = "3.9"
+NODE_OPTIONS = "--max_old_space_size=2048"
+NPM_FLAGS = "--prefer-offline --no-audit --progress=false"
 
 [[redirects]]
 from = "/api/*"
