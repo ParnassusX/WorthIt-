@@ -66,8 +66,16 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Add project root to path
-sys.path.append('.')
+# Add project root to path - using absolute path for reliability in serverless environment
+import os
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
+logger.info(f"Added project root to path: {project_root}")
+
+# Also add the netlify functions directory to path
+functions_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, functions_dir)
+logger.info(f"Added functions directory to path: {functions_dir}")
 
 # Handle Redis URL for Upstash SSL
 redis_url = os.getenv('REDIS_URL')
