@@ -6,9 +6,9 @@
   "scripts": {
     "start": "cd web-app && npm run dev",
     "build": "cd web-app && npm run build",
-    "deploy": "netlify deploy --prod",
-    "deploy:netlify": "cd web-app && npm run build && netlify deploy --prod",
-    "postinstall": "cd web-app && npm install --prefer-offline --no-audit --progress=false"
+    "deploy": "netlify deploy --prod --memory=2048",
+    "deploy:netlify": "cd web-app && npm run build && netlify deploy --prod --memory=2048",
+    "postinstall": "cd web-app && npm install --prefer-offline --no-audit --progress=false --no-fund"
   },
   "author": "",
   "license": "ISC",

@@ -1,5 +1,5 @@
 [build]
-command = "pip install -r requirements.txt && npm ci"
+command = "pip install -r requirements-netlify.txt --no-cache-dir && npm ci --prefer-offline --no-audit --progress=false"
 publish = "web-app/dist"
 functions = "netlify/functions"
 

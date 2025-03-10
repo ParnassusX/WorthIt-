@@ -60,7 +60,7 @@ cd ..
 :: Deploy to Netlify
 echo.
 echo Deploying to Netlify...
-npx --yes netlify deploy --prod
+npx --yes netlify deploy --prod --memory=2048
 if %ERRORLEVEL% neq 0 (
     echo.
     echo Error: Netlify deployment failed.
