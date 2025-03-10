@@ -28,10 +28,18 @@ directory = "netlify/functions"
 node_bundler = "esbuild"
 external_node_modules = ["python-telegram-bot"]
 
+# Increase function timeout and memory for better performance
+[functions.webhook]
+included_files = ["bot/**", "worker/**", "api/**", "*.py", "*.txt"]
+timeout = 30
+memory = 1024
+
+[functions.analyze]
+included_files = ["bot/**", "worker/**", "api/**", "*.py", "*.txt"]
+timeout = 30
+memory = 1024
+
 [dev]
 framework = "#custom"
 command = "python -m uvicorn api.main:app --reload"
 targetPort = 8000
-
-[functions.webhook]
-included_files = ["bot/**", "worker/**", "api/**"]

@@ -1,5 +1,7 @@
 // Netlify serverless function for product analysis
 const { spawn } = require('child_process');
+const path = require('path');
+const os = require('os');
 
 exports.handler = async function(event, context) {
   // Only allow POST requests
@@ -20,7 +22,18 @@ exports.handler = async function(event, context) {
   }
 
   try {
-    // Execute the Python analysis script
+    // Set environment variables for Redis SSL
+    process.env.REDIS_SSL = 'true';
+    process.env.REDIS_VERIFY_SSL = 'true';
+
+    // Convert Redis URL to use SSL if needed
+    const redisUrl = process.env.REDIS_URL;
+    if (redisUrl && redisUrl.includes('upstash') && !redisUrl.startsWith('rediss://')) {
+      process.env.REDIS_URL = redisUrl.replace('redis://', 'rediss://');
+      console.log(`Converted Redis URL to use SSL: ${process.env.REDIS_URL}`);
+    }
+
+    // Execute the Python analysis script with proper path setup
     const result = await executePythonScript(url);
     
     return {
@@ -48,13 +61,27 @@ import json
 import asyncio
 import os
 import sys
+import logging
 from dotenv import load_dotenv
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
 # Add project root to path
 sys.path.append('.')
+
+# Handle Redis URL for Upstash SSL
+redis_url = os.getenv('REDIS_URL')
+if redis_url and 'upstash' in redis_url and not redis_url.startswith('rediss://'):
+    os.environ['REDIS_URL'] = redis_url.replace('redis://', 'rediss://')
+    logger.info(f"Converted Redis URL to use SSL: {os.environ['REDIS_URL']}")
 
 # Import the product analysis function
 from api.main import analyze_product
@@ -65,6 +92,7 @@ async def analyze():
         result = await analyze_product('${productUrl}')
         return result
     except Exception as e:
+        logger.error(f"Error analyzing product: {str(e)}")
         return {"error": True, "message": str(e)}
 
 # Run the async function

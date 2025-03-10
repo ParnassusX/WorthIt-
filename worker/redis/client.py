@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from typing import Optional, Any
 from redis.asyncio import Redis
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -44,8 +45,10 @@ class RedisClient:
             "retry": True
         }
         
-        # Handle Upstash Redis URLs
-        if "upstash" in self.redis_url:
+        # Handle Upstash Redis URLs or check environment variables for SSL settings
+        use_ssl = "upstash" in self.redis_url or os.getenv('REDIS_SSL', '').lower() == 'true'
+        
+        if use_ssl:
             # Ensure we're using SSL for Upstash via rediss:// protocol
             # instead of using the explicit ssl parameter
             if not self.redis_url.startswith("rediss://"):
@@ -59,7 +62,8 @@ class RedisClient:
                 "max_connections": 5,
                 "retry_on_timeout": True,
                 "health_check_interval": 30,  # More frequent health checks for cloud Redis
-                "retry_on_error": True       # Retry on all errors, not just timeouts
+                "retry_on_error": True,      # Retry on all errors, not just timeouts
+                "ssl_cert_reqs": None        # Don't verify SSL cert in serverless environment
             })
             
             # Remove ssl parameter if it exists as it's not supported in current Redis client
