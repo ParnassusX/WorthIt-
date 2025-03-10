@@ -13,8 +13,9 @@ const recommendationEl = document.getElementById('recommendation');
 const prosList = document.getElementById('pros');
 const consList = document.getElementById('cons');
 
-// API endpoint - updated to use Netlify Functions endpoint
-const API_URL = '/.netlify/functions/analyze';
+// API endpoint - updated to use Netlify Functions endpoint with absolute path
+const API_URL = window.location.origin + '/.netlify/functions/analyze';
+console.log('Using API URL:', API_URL);
 
 // Event listeners
 analyzeBtn.addEventListener('click', analyzeProduct);

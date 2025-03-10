@@ -64,7 +64,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load environment variables
-load_dotenv()
+try:
+    # First try to load from .env file
+    load_dotenv()
+    logger.info("Loaded environment variables from .env file")
+except Exception as e:
+    logger.warning(f"Could not load .env file: {str(e)}")
+    
+# Verify environment variables are available
+logger.info(f"Environment variables check: TELEGRAM_TOKEN exists: {bool(os.getenv('TELEGRAM_TOKEN'))}")
 
 # Add project root to path - using absolute path for reliability in serverless environment
 import os
