@@ -8,7 +8,7 @@
     "build": "cd web-app && npm run build",
     "deploy": "netlify deploy --prod --memory=2048",
     "deploy:netlify": "cd web-app && npm run build && netlify deploy --prod --memory=2048",
-    "postinstall": "cd web-app && npm install --prefer-offline --no-audit --progress=false --no-fund"
+    "setup": "cd web-app && npm install --prefer-offline --no-audit --progress=false --no-fund"
   },
   "author": "",
   "license": "ISC",

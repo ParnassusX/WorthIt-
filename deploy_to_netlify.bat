@@ -46,7 +46,7 @@ cd web-app
 :: Use memory-optimized npm install
 echo Using memory-optimized npm install...
 set NODE_OPTIONS=--max_old_space_size=2048
-npm install --prefer-offline --no-audit --progress=false
+npm install --prefer-offline --no-audit --progress=false --no-fund --ignore-scripts
 npm run build
 if %ERRORLEVEL% neq 0 (
     echo.
