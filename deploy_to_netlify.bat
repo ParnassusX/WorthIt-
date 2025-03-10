@@ -47,6 +47,9 @@ cd web-app
 echo Using memory-optimized npm install...
 set NODE_OPTIONS=--max_old_space_size=2048
 npm install --prefer-offline --no-audit --progress=false --no-fund --ignore-scripts
+
+:: Run the build command
+echo Running build command...
 npm run build
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -55,6 +58,18 @@ if %ERRORLEVEL% neq 0 (
     pause
     exit /b 1
 )
+
+:: Verify the dist directory exists
+if not exist dist\ (
+    echo.
+    echo Error: Build completed but dist directory was not created.
+    echo Please check your vite.config.js and build configuration.
+    cd ..
+    pause
+    exit /b 1
+)
+
+echo Build completed successfully. Dist directory created.
 cd ..
 
 :: Deploy to Netlify
