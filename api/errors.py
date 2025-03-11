@@ -23,6 +23,11 @@ class ProductNotFoundError(HTTPException):
     def __init__(self, detail="Product not found"):
         super().__init__(status_code=404, detail=detail)
 
+class CacheError(HTTPException):
+    """Exception raised when cache operations fail"""
+    def __init__(self, detail="Cache operation failed"):
+        super().__init__(status_code=503, detail=detail)
+
 # Error handlers
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle validation errors"""

@@ -19,6 +19,11 @@ to = "/.netlify/functions/webhook"
 status = 200
 
 [[redirects]]
+from = "/stripe-webhook"
+to = "/.netlify/functions/stripe-webhook"
+status = 200
+
+[[redirects]]
 from = "/worker/static/*"
 to = "/worker/static/:splat"
 status = 200
@@ -34,6 +39,10 @@ included_files = ["**/*.py", "**/*.txt", "requirements*.txt"]
 included_files = ["bot/**", "worker/**", "api/**", "*.py", "*.txt"]
 timeout = 30
 memory = 1024
+# Add proper environment variable configuration
+[functions.webhook.environment]
+NODE_ENV = "production"
+VERSION = "1.0.0"
 
 [functions.analyze]
 included_files = ["bot/**", "worker/**", "api/**", "*.py", "*.txt"]

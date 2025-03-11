@@ -132,15 +132,15 @@ class PostDeploymentChecker:
             return False
         
         self.log("\nChecking Redis connection...")
-        redis_tester = RedisTester(redis_url=self.redis_url, verbose=self.verbose)
+        redis_tester = RedisTester(redis_url=self.redis_url)
         
         # Test async connection
-        async_result = await redis_tester.test_async_connection()
-        self.results['redis_connection']['async'] = async_result
+        async_result = await redis_tester.test_async()
+        self.results['redis_connection']['async'] = async_result.get('success', False)
         
         # Test sync connection
-        sync_result = redis_tester.test_sync_connection()
-        self.results['redis_connection']['sync'] = sync_result
+        sync_result = redis_tester.test_sync()
+        self.results['redis_connection']['sync'] = sync_result.get('success', False)
         
         if async_result and sync_result:
             self.log("✅ Redis connection is working (both async and sync)")

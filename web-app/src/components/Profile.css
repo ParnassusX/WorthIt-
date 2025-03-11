@@ -1,0 +1,111 @@
+.profile-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.profile-header {
+  border-bottom: 1px solid #eee;
+  padding-bottom: 15px;
+  margin-bottom: 20px;
+}
+
+.profile-header h2 {
+  margin: 0;
+  color: #333;
+  font-size: 24px;
+}
+
+.profile-loading {
+  text-align: center;
+  padding: 40px;
+  font-size: 18px;
+  color: #666;
+}
+
+.user-details {
+  margin-bottom: 30px;
+}
+
+.user-details h3 {
+  margin: 0 0 10px 0;
+  font-size: 20px;
+  color: #333;
+}
+
+.user-details p {
+  margin: 0;
+  color: #666;
+  font-size: 16px;
+}
+
+.subscription-details {
+  background-color: #f9f9f9;
+  padding: 20px;
+  border-radius: 6px;
+}
+
+.subscription-details h3 {
+  margin: 0 0 15px 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.current-plan {
+  padding: 15px;
+  background-color: #e8f4fd;
+  border-radius: 6px;
+  border-left: 4px solid #2196f3;
+}
+
+.current-plan p {
+  margin: 5px 0;
+  font-size: 16px;
+  color: #444;
+}
+
+.no-subscription {
+  padding: 15px;
+  background-color: #f5f5f5;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.no-subscription p {
+  margin: 0 0 15px 0;
+  font-size: 16px;
+  color: #666;
+}
+
+.subscription-options {
+  display: flex;
+  gap: 15px;
+  justify-content: center;
+  margin-top: 15px;
+}
+
+.subscription-options button {
+  padding: 10px 20px;
+  background-color: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: background-color 0.3s;
+}
+
+.subscription-options button:hover {
+  background-color: #0d8aee;
+}
+
+.subscription-options button:last-child {
+  background-color: #4caf50;
+}
+
+.subscription-options button:last-child:hover {
+  background-color: #3d9140;
+}

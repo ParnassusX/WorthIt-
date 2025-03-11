@@ -12,7 +12,9 @@
   },
   "author": "",
   "license": "ISC",
-  "dependencies": {},
+  "dependencies": {
+    "stripe": "^17.7.0"
+  },
   "workspaces": [
     "web-app"
   ]

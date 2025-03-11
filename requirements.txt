@@ -50,3 +50,6 @@ aiohttp>=3.8.4
 
 # Security
 python-multipart>=0.0.6
+
+# Payment processing
+stripe>=11.6.0

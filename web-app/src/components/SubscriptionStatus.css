@@ -1,0 +1,92 @@
+.subscription-status {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  min-width: 300px;
+  max-width: 400px;
+  padding: 15px;
+  border-radius: 6px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  z-index: 1000;
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.subscription-status.hidden {
+  opacity: 0;
+  transform: translateX(30px);
+  pointer-events: none;
+}
+
+.subscription-status.visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.status-icon {
+  font-size: 20px;
+  margin-right: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.status-message {
+  flex: 1;
+  font-size: 16px;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 20px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.close-button:hover {
+  opacity: 1;
+}
+
+/* Status colors */
+.subscription-status.success {
+  background-color: #4caf50;
+  color: white;
+}
+
+.subscription-status.error {
+  background-color: #f44336;
+  color: white;
+}
+
+.subscription-status.warning {
+  background-color: #ff9800;
+  color: white;
+}
+
+.subscription-status.info {
+  background-color: #2196f3;
+  color: white;
+}
+
+.subscription-status.pending {
+  background-color: #9c27b0;
+  color: white;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .subscription-status {
+    min-width: auto;
+    max-width: 90%;
+    left: 5%;
+    right: 5%;
+  }
+}

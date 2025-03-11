@@ -9,6 +9,7 @@ from api.ml_processor import analyze_reviews, extract_product_pros_cons, get_val
 from api.routes import router as api_router
 from api.monitoring import setup_metrics
 from api.validation import validation_middleware
+from api.response_time_monitor import setup_response_time_monitoring
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 # Mock implementation for testing
 from datetime import timedelta
 
+# PRODUCTION: Enhance circuit breaker implementation with proper state persistence
+# TODO: Replace mock implementation with a real circuit breaker library
+# TODO: Add Redis-based state storage for circuit breaker state persistence
 class CircuitBreakerState:
     def __init__(self):
         self.state = "closed"
@@ -57,6 +61,7 @@ app = FastAPI(title="WorthIt! API", version="1.0.0")
 from fastapi.middleware.cors import CORSMiddleware
 from api.security import ALLOWED_ORIGINS, ALLOWED_METHODS, ALLOWED_HEADERS
 
+# Production-ready CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -67,11 +72,22 @@ app.add_middleware(
     max_age=3600
 )
 
+# Add rate limiting middleware for all endpoints
+from api.rate_limiter import create_rate_limit_middleware
+app.middleware("http")(create_rate_limit_middleware())
+
 # Setup monitoring
 setup_metrics(app)
 
 # Add validation middleware
 app.middleware("http")(validation_middleware)
+
+# Setup security middleware (key rotation, fraud detection, payment encryption)
+from api.security_middleware import setup_security_middleware
+setup_security_middleware(app)
+
+# Setup response time monitoring
+setup_response_time_monitoring(app)
 
 # Register error handlers
 register_exception_handlers(app)
@@ -85,6 +101,10 @@ app.include_router(image_router, prefix="/api")
 
 # Include API routes for tests
 app.include_router(api_router)
+
+# Include payment routes
+from api.payment_routes import payment_router
+app.include_router(payment_router)
 
 # Removed mock implementation of analyze_product endpoint
 # The actual implementation is defined below

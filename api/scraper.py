@@ -1,27 +1,54 @@
 # WorthIt! Product Scraper
 import os
 import json
+import logging
+import time
+import asyncio
 from typing import Dict, Any, Optional, List
 import httpx
 from apify_client import ApifyClient
 from dotenv import load_dotenv
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
 # Initialize Apify client
 APIFY_TOKEN = os.getenv("APIFY_TOKEN")
+if not APIFY_TOKEN:
+    logger.warning("APIFY_TOKEN environment variable not set. Scraping features will not work properly.")
+
 apify_client = ApifyClient(APIFY_TOKEN)
 
 class ProductScraper:
-    """Class to handle product data extraction from e-commerce websites"""
+    """Class to handle product data extraction from e-commerce websites with enhanced error handling"""
     
     def __init__(self):
         self.apify_client = apify_client
+        self.timeout = httpx.Timeout(60.0, connect=15.0)
+        self.limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        self.metrics = {
+            "requests": 0,
+            "errors": 0,
+            "avg_latency": 0,
+            "last_error": None,
+            "last_request_time": None
+        }
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((ConnectionError, httpx.HTTPError, httpx.TimeoutException, asyncio.TimeoutError))
+    )
     async def extract_product(self, url: str) -> Dict[str, Any]:
         """Extract product data from any supported e-commerce site using Apify Web Scraper"""
         try:
+            start_time = time.time()
+            self.metrics["requests"] += 1
+            
             # Run the Web Scraper actor with custom page function
             run_input = {
                 "startUrls": [{"url": url}],
@@ -70,39 +97,74 @@ class ProductScraper:
                 "proxyConfiguration": {"useApifyProxy": True}
             }
             
-            # Start the actor and wait for it to finish
-            run = self.apify_client.actor("apify/web-scraper").call(run_input=run_input)
-            
-            # Fetch the actor's output
-            items = self.apify_client.dataset(run["defaultDatasetId"]).list_items().items
-            
-            if not items:
-                raise ValueError("No product data found")
-            
-            # Extract the first item (should be only one for a single URL)
-            product_data = items[0]
-            
-            # Format the response
-            return {
-                "title": product_data.get("title", "Unknown Product"),
-                "price": product_data.get("price", "Price not available"),
-                "description": product_data.get("description", ""),
-                "reviews": product_data.get("reviews", []),
-                "url": url
-            }
+            try:
+                # Start the actor and wait for it to finish with timeout handling
+                run = self.apify_client.actor("apify/web-scraper").call(run_input=run_input, timeout_secs=120)
+                
+                # Fetch the actor's output
+                items = self.apify_client.dataset(run["defaultDatasetId"]).list_items().items
+                
+                if not items:
+                    error_msg = "No product data found"
+                    logger.error(f"{error_msg} for URL: {url}")
+                    self.metrics["errors"] += 1
+                    self.metrics["last_error"] = error_msg
+                    raise ValueError(error_msg)
+                
+                # Extract the first item (should be only one for a single URL)
+                product_data = items[0]
+                
+                # Update metrics on success
+                duration = time.time() - start_time
+                self.metrics["last_request_time"] = duration
+                self.metrics["avg_latency"] = (
+                    (self.metrics["avg_latency"] * (self.metrics["requests"] - 1) + duration) / 
+                    self.metrics["requests"]
+                )
+                
+                # Format the response
+                return {
+                    "title": product_data.get("title", "Unknown Product"),
+                    "price": product_data.get("price", "Price not available"),
+                    "description": product_data.get("description", ""),
+                    "reviews": product_data.get("reviews", []),
+                    "url": url
+                }
+                
+            except asyncio.TimeoutError:
+                error_msg = "Timeout while waiting for Apify actor to complete"
+                logger.error(f"{error_msg} for URL: {url}")
+                self.metrics["errors"] += 1
+                self.metrics["last_error"] = error_msg
+                raise
+                
+            except Exception as e:
+                error_msg = f"Error during Apify API call: {str(e)}"
+                logger.error(f"{error_msg} for URL: {url}")
+                self.metrics["errors"] += 1
+                self.metrics["last_error"] = str(e)
+                raise
             
         except Exception as e:
             # Log the error and return a structured error response
-            print(f"Error extracting product data: {str(e)}")
+            logger.error(f"Error extracting product data: {str(e)}")
             return {
                 "error": True,
                 "message": f"Failed to extract product data: {str(e)}",
                 "url": url
             }
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((ConnectionError, httpx.HTTPError, httpx.TimeoutException, asyncio.TimeoutError))
+    )
     async def extract_reviews(self, url: str, max_reviews: int = 20) -> List[Dict[str, Any]]:
-        """Extract product reviews from Amazon using Apify"""
+        """Extract product reviews from Amazon using Apify with enhanced error handling"""
         try:
+            start_time = time.time()
+            self.metrics["requests"] += 1
+            
             # Run the Amazon Review Scraper actor
             run_input = {
                 "startUrls": [{"url": url}],
@@ -111,31 +173,57 @@ class ProductScraper:
                 "proxyConfiguration": {"useApifyProxy": True}
             }
             
-            # Start the actor and wait for it to finish
-            run = self.apify_client.actor("epctex/amazon-reviews-scraper").call(run_input=run_input)
-            
-            # Fetch the actor's output
-            items = self.apify_client.dataset(run["defaultDatasetId"]).list_items().items
-            
-            if not items:
-                return []
-            
-            # Format the reviews
-            reviews = []
-            for item in items:
-                reviews.append({
-                    "rating": item.get("rating", 0),
-                    "title": item.get("title", ""),
-                    "review": item.get("review", ""),
-                    "date": item.get("date", ""),
-                    "verified": item.get("verifiedPurchase", False)
-                })
-            
-            return reviews
+            try:
+                # Start the actor and wait for it to finish with timeout handling
+                run = self.apify_client.actor("epctex/amazon-reviews-scraper").call(run_input=run_input, timeout_secs=120)
+                
+                # Fetch the actor's output
+                items = self.apify_client.dataset(run["defaultDatasetId"]).list_items().items
+                
+                if not items:
+                    logger.warning(f"No reviews found for URL: {url}")
+                    return []
+                
+                # Format the reviews
+                reviews = []
+                for item in items:
+                    reviews.append({
+                        "rating": item.get("rating", 0),
+                        "title": item.get("title", ""),
+                        "review": item.get("review", ""),
+                        "date": item.get("date", ""),
+                        "verified": item.get("verifiedPurchase", False)
+                    })
+                
+                # Update metrics on success
+                duration = time.time() - start_time
+                self.metrics["last_request_time"] = duration
+                self.metrics["avg_latency"] = (
+                    (self.metrics["avg_latency"] * (self.metrics["requests"] - 1) + duration) / 
+                    self.metrics["requests"]
+                )
+                
+                return reviews
+                
+            except asyncio.TimeoutError:
+                error_msg = "Timeout while waiting for Apify actor to complete"
+                logger.error(f"{error_msg} for URL: {url}")
+                self.metrics["errors"] += 1
+                self.metrics["last_error"] = error_msg
+                raise
+                
+            except Exception as e:
+                error_msg = f"Error during Apify API call: {str(e)}"
+                logger.error(f"{error_msg} for URL: {url}")
+                self.metrics["errors"] += 1
+                self.metrics["last_error"] = str(e)
+                raise
             
         except Exception as e:
             # Log the error and return an empty list
-            print(f"Error extracting reviews: {str(e)}")
+            logger.error(f"Error extracting reviews: {str(e)}")
+            self.metrics["errors"] += 1
+            self.metrics["last_error"] = str(e)
             return []
 
 # Create a singleton instance

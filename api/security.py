@@ -24,6 +24,21 @@ class SecurityMiddleware:
         self.ddos_protection = DDoSProtection()
         self.auth_manager = AuthenticationManager()
         self.request_validator = RequestValidator()
+        self.rate_limiter = RateLimiter()
+        
+        # Configure endpoint-specific rate limits
+        self.endpoint_limits = {
+            "/api/analyze": {"limit": 30, "window": 60},  # 30 requests per minute
+            "/api/analyze-image": {"limit": 20, "window": 60},  # 20 requests per minute
+            "/webhook": {"limit": 60, "window": 60}  # 60 requests per minute
+        }
+        
+        # Configure input validation rules
+        self.validation_rules = {
+            "url": {"max_length": 2048, "required_protocol": ["http", "https"]},
+            "text": {"max_length": 5000, "min_length": 1},
+            "api_key": {"pattern": r"^[A-Za-z0-9-_]{32}$"}
+        }
     
     async def process_request(self, request: Request):
         # DDoS protection check

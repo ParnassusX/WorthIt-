@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 from .redis_manager import get_redis_client, get_redis_manager
 
+# PRODUCTION: Enhance Redis connection management
+# TODO: Implement proper connection pooling with health checks
+# TODO: Add metrics collection for Redis operations
+# TODO: Implement circuit breaker pattern for Redis operations
 class TaskQueue:
     def __init__(self):
         from worker.redis_manager import get_redis_manager
@@ -33,6 +37,10 @@ class TaskQueue:
                     logger.critical("Multiple connection cleanup failures detected")
                 await asyncio.sleep(60)  # Wait before retrying
     
+    # PRODUCTION: Improve connection health monitoring
+    # TODO: Implement proper metrics for connection health
+    # TODO: Add alerting for persistent connection issues
+    # TODO: Implement automatic recovery for connection failures
     async def _health_check(self):
         """Periodic health check for Redis connection"""
         while not self._is_shutting_down:
@@ -81,6 +89,10 @@ class TaskQueue:
             except:
                 pass
     
+    # PRODUCTION: Enhance task queue operations with better error handling
+    # TODO: Implement dead letter queue for failed tasks
+    # TODO: Add task prioritization mechanism
+    # TODO: Implement task timeout and retry policies
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     async def enqueue(self, task: Dict[str, Any]) -> bool:
         """Add a task to the queue with retry logic"""
