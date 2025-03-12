@@ -31,7 +31,7 @@ status = 200
 [functions]
 directory = "netlify/functions"
 node_bundler = "esbuild"
-external_node_modules = ["python-telegram-bot"]
+external_node_modules = ["python-telegram-bot", "stripe"]
 included_files = ["**/*.py", "**/*.txt", "requirements*.txt"]
 
 # Increase function timeout and memory for better performance

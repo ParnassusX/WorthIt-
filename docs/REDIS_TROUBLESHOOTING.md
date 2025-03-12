@@ -11,7 +11,7 @@ Based on our diagnostics, we've identified several issues with the Redis connect
 
 2. **Socket Connection Failure**: Unable to establish a TCP connection to the Redis server on port 18843.
 
-3. **Architecture Compatibility Issues**: The current setup may have compatibility issues between Vercel serverless functions and Redis Cloud.
+3. **Architecture Compatibility Issues**: The current setup may have compatibility issues between Netlify Functions and Redis Cloud.
 
 ## Recommended Solutions
 
@@ -35,9 +35,9 @@ REDIS_URL=redis://localhost:6379
 
 ### 3. Architectural Improvements
 
-#### Option A: Upstash Redis (Recommended for Vercel)
+#### Option A: Upstash Redis (Recommended for Netlify)
 
-Upstash provides Redis that works well with serverless environments like Vercel:
+Upstash provides Redis that works well with serverless environments like Netlify:
 
 1. Create an account at [upstash.com](https://upstash.com/)
 2. Create a Redis database
@@ -153,6 +153,6 @@ This separation allows us to optimize each component for its specific requiremen
 ## Additional Resources
 
 - [Upstash Redis Documentation](https://docs.upstash.com/redis)
-- [Vercel Serverless Functions](https://vercel.com/docs/concepts/functions/serverless-functions)
+- [Netlify Functions](https://docs.netlify.com/functions/overview/)
 - [Render Web Services](https://render.com/docs/web-services)
 - [Redis Best Practices](https://redis.io/topics/clients)

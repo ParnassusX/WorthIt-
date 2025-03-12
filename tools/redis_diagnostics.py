@@ -212,17 +212,17 @@ try:
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
     
-    # Vercel and Redis compatibility check
-    print("\n=== Vercel and Redis Compatibility Check ===")
-    print("Note: Vercel Serverless Functions have the following limitations:")
-    print("1. Execution timeout: 10 seconds maximum")
+    # Netlify and Redis compatibility check
+    print("\n=== Netlify and Redis Compatibility Check ===")
+    print("Note: Netlify Functions have the following limitations:")
+    print("1. Execution timeout: 10 seconds by default, up to 26 seconds with configuration")
     print("2. Memory: 1024 MB maximum")
     print("3. Ephemeral filesystem: No persistent storage")
     print("4. Cold starts: Functions may need to establish new connections")
-    print("\nRecommendations for Vercel + Redis:")
+    print("\nRecommendations for Netlify + Redis:")
     print("1. Use connection pooling with appropriate timeouts")
     print("2. Implement retry logic for connection failures")
-    print("3. Consider using Upstash Redis (Vercel integration) instead")
+    print("3. Consider using Upstash Redis (works well with serverless functions)")
     print("4. For background processing, use a separate worker service on Render")
     
     # Render and Redis compatibility check
